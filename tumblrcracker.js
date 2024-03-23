@@ -1,0 +1,166 @@
+require('dotenv').config();
+const axios = require('axios');
+const OAuth = require('oauth-1.0a');
+const crypto = require('crypto');
+const fs = require('fs');
+
+const blogName = process.env.BLOG_NAME;
+// OAuth configuration
+const oauth = OAuth({
+    consumer: {
+        key: process.env.CONSUMER_KEY,
+        secret: process.env.CONSUMER_SECRET,
+    },
+    signature_method: 'HMAC-SHA1',
+    hash_function(base_string, key) {
+        return crypto.createHmac('sha1', key).update(base_string).digest('base64');
+    },
+});
+
+// OAuth token (if available)
+const token = {
+    key: process.env.OAUTH_KEY,
+    secret: process.env.OAUTH_SECRET,
+};
+
+// Function to fetch followers with pagination
+async function fetchFollowers(blogName, limit, offset = 0) {
+    try {
+        const apiUrl = `https://api.tumblr.com/v2/blog/${blogName}/followers`;
+        const queryParams = {
+            limit,
+            offset,
+        };
+        const request_data = {
+            url: `${apiUrl}?${new URLSearchParams(queryParams)}`,
+            method: 'GET',
+        };
+        const headers = oauth.toHeader(oauth.authorize(request_data, token));
+        const response = await axios.get(request_data.url, { headers });
+        return response.data.response;
+    } catch (error) {
+        throw new Error(`Failed to fetch followers from Tumblr API: ${error.message}`);
+    }
+}
+
+// Function to fetch all followers
+async function fetchAllFollowers(blogName, offset, total_users) {
+    try {
+        let allFollowers = [];
+        const limit = 20; // Adjust the limit as needed
+        while (total_users > 0) {
+            const response = await fetchFollowers(blogName, limit, offset);
+            const users = response.users;
+            allFollowers = allFollowers.concat(users);
+            offset += limit;
+            total_users -= limit;
+            console.log(`Fetched ${users.length} followers. Remaining: ${total_users}`);
+        }
+        return allFollowers;
+    } catch (error) {
+        throw new Error(`Failed to fetch all followers: ${error.message}`);
+    }
+}
+
+// Function to convert Unix timestamp to real date
+function convertUnixToDate(unixTimestamp) {
+    return new Date(unixTimestamp * 1000); // Multiply by 1000 to convert seconds to milliseconds
+}
+
+// Reload followers JSON file, convert Unix timestamps to real dates, and overwrite the file
+function reloadAndConvertJSON(filePath) {
+    const currentDate = new Date();
+    try {
+        // Read the JSON file
+        const jsonData = fs.readFileSync(filePath, 'utf8');
+
+        //console.log(jsonData);
+
+        // Check if JSON data is empty or not in a valid JSON format
+        if (!jsonData.trim()) {
+            console.log('JSON file is empty.');
+            return;
+        }
+
+        let followers = [];
+        try {
+            // Parse JSON data
+            followers = JSON.parse(jsonData);
+        } catch (parseError) {
+            console.error('Error parsing JSON:', parseError.message);
+            return;
+        }
+
+        // Iterate through followers array and convert Unix timestamps to real dates
+        followers.forEach(follower => {
+            // if (follower.updated) {
+            //     follower.updated = convertUnixToDate(follower.updated);
+            // }
+            follower.lastChecked = currentDate;
+        });
+
+        // Convert followers array back to JSON
+        const updatedJsonData = JSON.stringify(followers, null, 2);
+
+        // Overwrite the JSON file with the updated data
+        fs.writeFileSync('followersParsed.json', updatedJsonData);
+
+        console.log('JSON file updated successfully');
+    } catch (error) {
+        console.error('Error reloading and converting JSON file:', error);
+    }
+}
+
+// Function to get the current date and time in the format "dd-mm-yyyy hh:mm:ss:ms"
+function getCurrentDate() {
+    const currentDate = new Date();
+    const day = String(currentDate.getDate()).padStart(2, '0');
+    const month = String(currentDate.getMonth() + 1).padStart(2, '0'); // Months are zero-based
+    const year = currentDate.getFullYear();
+    const hours = String(currentDate.getHours()).padStart(2, '0');
+    const minutes = String(currentDate.getMinutes()).padStart(2, '0');
+    const seconds = String(currentDate.getSeconds()).padStart(2, '0');
+    const milliseconds = String(currentDate.getMilliseconds()).padStart(3, '0');
+    //return `${day}-${month}-${year} ${hours}:${minutes}:${seconds}:${milliseconds}`;
+    return `${day}-${month}-${year} ${hours}`;
+}
+
+async function main() {
+    try {
+        const currentDate = getCurrentDate();
+        //getting count of followers
+       const thing = await fetchFollowers(blogName, limit = 2000, offset = 0);
+        console.log(thing);
+        console.log(thing.total_users);
+        const userCount = thing.total_users;
+        //the business
+        const followers = await fetchAllFollowers(blogName, offset, userCount);
+        const jsonData = JSON.stringify(followers, null, 2);
+        fs.writeFile('followers' + currentDate + '.json', jsonData, err => {
+            if (err) {
+                console.error('Error writing JSON to file:', err);
+                return { data: null, success: false, error: err };
+    
+            } else {
+                console.log('JSON data saved to followers.json');
+                return { data: jsonData, success: true, error: null };
+  
+            }
+        });
+
+      //  reloadAndConvertJSON('followers.json');
+    } catch (error) {
+        console.error(error.message, error);
+        return error;
+    }
+}
+
+// Export the functions and variables
+module.exports = {
+    fetchFollowers,
+    fetchAllFollowers,
+    convertUnixToDate,
+    reloadAndConvertJSON,
+    getCurrentDate,
+    main
+};

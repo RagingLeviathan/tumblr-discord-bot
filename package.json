@@ -1,0 +1,20 @@
+{
+  "name": "tumblr-cracker",
+  "version": "1.0.0",
+  "description": "Node.js app to consume tumblr api and check shit",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Nix",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.6.8",
+    "crypto": "^1.0.1",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
+    "fs": "^0.0.1-security",
+    "oauth": "^0.10.0",
+    "oauth-1.0a": "^2.2.6"
+  }
+}
