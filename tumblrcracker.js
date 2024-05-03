@@ -1,8 +1,10 @@
+//tumblrcracker v2 - multiuser dynamic implementation
 require('dotenv').config();
 const axios = require('axios');
 const OAuth = require('oauth-1.0a');
 const crypto = require('crypto');
 const fs = require('fs');
+const { fetchFollowersWithToken } = require('./fetchFollowersWithToken');
 
 const blogName = process.env.BLOG_NAME;
 // OAuth configuration
@@ -47,20 +49,30 @@ async function fetchFollowers(blogName, limit, offset = 0) {
 async function fetchAllFollowers(blogName, offset, total_users) {
     try {
         let allFollowers = [];
-        const limit = 20; // Adjust the limit as needed
-        while (total_users > 0) {
+        let remainingUsers = total_users; // Store the remaining users separately
+
+        while (remainingUsers > 0) {
+            // Adjust the limit based on the remaining users
+            let limit = remainingUsers <= 20 ? remainingUsers : 20;
+
             const response = await fetchFollowers(blogName, limit, offset);
             const users = response.users;
             allFollowers = allFollowers.concat(users);
-            offset += limit;
-            total_users -= limit;
-            console.log(`Fetched ${users.length} followers. Remaining: ${total_users}`);
+            offset += users.length; // Adjust offset based on the number of fetched users
+            remainingUsers -= users.length; // Update the remaining users count
+            console.log(`Fetched ${users.length} followers. Remaining: ${remainingUsers}, limit: ${limit}, offset: ${offset}`);
+            // Check if there are no more remaining followers
+            if (remainingUsers <= 0) {
+                console.log('All followers fetched.');
+                break; // Exit the loop
+            }
         }
         return allFollowers;
     } catch (error) {
         throw new Error(`Failed to fetch all followers: ${error.message}`);
     }
 }
+
 
 // Function to convert Unix timestamp to real date
 function convertUnixToDate(unixTimestamp) {
@@ -125,15 +137,46 @@ function getCurrentDate() {
     return `${day}-${month}-${year} ${hours}`;
 }
 
-async function main() {
+// async function main(accessToken) {
+//     try {
+//         const currentDate = getCurrentDate();
+//         //getting count of followers
+//        const thing = await fetchFollowers(blogName, limit = 2000, offset = 0);
+//         console.log(thing);
+//         console.log(thing.total_users);
+//         const userCount = thing.total_users;
+//         //the business
+//         const followers = await fetchAllFollowers(blogName, offset, userCount);
+//         const jsonData = JSON.stringify(followers, null, 2);
+//         fs.writeFile('followers' + currentDate + '.json', jsonData, err => {
+//             if (err) {
+//                 console.error('Error writing JSON to file:', err);
+//                 return { data: null, success: false, error: err };
+    
+//             } else {
+//                 console.log('JSON data saved to followers.json');
+//                 return { data: jsonData, success: true, error: null };
+  
+//             }
+//         });
+
+//       //  reloadAndConvertJSON('followers.json');
+//     } catch (error) {
+//         console.error(error.message, error);
+//         return error;
+//     }
+// }
+
+//v2 main
+async function main(blogName, accessToken) {
     try {
+
         const currentDate = getCurrentDate();
-        //getting count of followers
-       const thing = await fetchFollowers(blogName, limit = 2000, offset = 0);
+        const thing = await fetchFollowersWithToken(blogName, accessToken, limit = 2000, offset = 0);
         console.log(thing);
         console.log(thing.total_users);
         const userCount = thing.total_users;
-        //the business
+     //the business
         const followers = await fetchAllFollowers(blogName, offset, userCount);
         const jsonData = JSON.stringify(followers, null, 2);
         fs.writeFile('followers' + currentDate + '.json', jsonData, err => {
@@ -147,11 +190,8 @@ async function main() {
   
             }
         });
-
-      //  reloadAndConvertJSON('followers.json');
     } catch (error) {
         console.error(error.message, error);
-        return error;
     }
 }
 
