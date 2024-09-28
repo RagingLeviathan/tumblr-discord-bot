@@ -41,6 +41,15 @@ async function fetchFollowers(blogName, limit, offset = 0) {
         const response = await axios.get(request_data.url, { headers });
         return response.data.response;
     } catch (error) {
+        console.log('Response headers:', error.response.headers); // Log the headers
+
+        if (error.response && error.response.status === 429) {
+            const retryAfter = error.response.headers['x-ratelimit-perhour-reset'] || 60; // Default to 60 seconds if not specified
+            console.log(`Rate limit exceeded. Retrying after ${retryAfter} seconds...`);
+            await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+            return fetchFollowers(blogName, limit, offset); // Retry the request
+        }
+
         throw new Error(`Failed to fetch followers from Tumblr API: ${error.message}`);
     }
 }
