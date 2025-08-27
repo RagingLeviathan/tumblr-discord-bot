@@ -1,8 +1,8 @@
 const fs = require('fs');
 
 // Read and parse JSON files
-const file1Data = JSON.parse(fs.readFileSync('followers28-09-2024 16.json'));
-const file2Data = JSON.parse(fs.readFileSync('followers22-09-2024 23.json'));
+const file1Data = JSON.parse(fs.readFileSync('followers24-08-2025 15.json'));
+const file2Data = JSON.parse(fs.readFileSync('followers24-08-2025 11.json'));
 
 // Extract follower names from each file
 const file1Names = file1Data.map(follower => follower.name);

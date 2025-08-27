@@ -47,7 +47,9 @@ async function fetchFollowersWithToken(
         } else if (error.response.status === 429) {
           console.log("Received 429 error. Too many requests.");
           console.log("Response headers:", error.response.headers); // Log the headers
-          const retryAfter = error.response.headers["retry-after"] || 60; // Default to 60 seconds if not specified
+          //tumblr dudes said this is incorrect, calls on follower are limited to 60 per minute
+          //const retryAfter = error.response.headers["retry-after"] || 60; // Default to 60 seconds if not specified
+          const retryAfter =  60; // Default to 60 seconds if not specified
           console.log(`Retrying after ${retryAfter} seconds...`);
           await new Promise((resolve) =>
             setTimeout(resolve, retryAfter * 1000)

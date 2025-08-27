@@ -85,6 +85,9 @@ async function exchangeCodeForToken(code) {
 
 client.on("ready", () => {
   console.log("The owl bot is online. 🦉"); //message when bot is online
+  console.log(
+    "Authorize your Tumblr account here: http://localhost:3000/authorize"
+  );
 
   client.on("messageCreate", async (message) => {
     // console.log(message);
@@ -111,12 +114,21 @@ client.on("ready", () => {
       console.log(`Blog name: ${blogName}`);
 
       try {
+        console.log(
+          `Calling main with blogName: ${blogName}, accessToken: ${accessToken}`
+        );
         let result = await main(blogName, accessToken);
-        console.log(result);
+        console.log("Result from main:", result);
         if (result && result.success) {
           console.log("main() returned true");
           message.channel.send("Tumblr Followers list updated! Hoo! 🦉");
-          message.channel.send(result.data);
+          // Send a summary instead
+          const followerCount = JSON.parse(result.data).length;
+          message.channel.send(`Fetched ${followerCount} followers. Data saved to file.`);
+
+          // Or, upload the file if you want to share the full data:
+          const filePath = "followers" + getCurrentDate() + ".json";
+          message.channel.send({ files: [filePath] });
         } else {
           console.log("main() returned false");
           message.channel.send("Hoo... fell over and crashed... 🦉💦");
