@@ -5,59 +5,22 @@ const path = require("path");
 const crypto = require("crypto");
 const { getThreadBlog } = require("../config/blogConfig");
 const paths = require("../config/dataPaths");
+const { BLOG_PATTERN, ValidationError, postFromId, parsePostUrl } = require("../../public/threads/postReference");
 
 const DEFAULT_FILE = path.join(paths.threads, "tracked_threads.json");
-const BLOG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
-class ValidationError extends Error {}
+class DuplicateThreadError extends ValidationError {
+  constructor(thread) {
+    super("This post is already tracked.");
+    this.thread = thread;
+  }
+}
 
 function validateTitle(title) {
   if (typeof title !== "string" || !title.trim() || title.trim().length > 200) {
     throw new ValidationError("Enter a thread title of 1 to 200 characters.");
   }
   return title.trim();
-}
-
-function postFromId(blog, postId) {
-  if (typeof blog !== "string" || !BLOG_PATTERN.test(blog.trim().toLowerCase())) {
-    throw new ValidationError("Enter a valid Tumblr blog name.");
-  }
-  if (typeof postId !== "string" || !/^\d+$/.test(postId.trim())) {
-    throw new ValidationError("Enter a numeric Tumblr post ID.");
-  }
-  blog = blog.trim().toLowerCase();
-  postId = postId.trim();
-  return { blog, postId, url: `https://www.tumblr.com/${blog}/${postId}` };
-}
-
-function parsePostUrl(input) {
-  let url;
-  try {
-    url = new URL(input);
-  } catch {
-    throw new ValidationError("Enter a valid Tumblr post URL.");
-  }
-  if (url.protocol !== "https:" || url.username || url.password || url.port) {
-    throw new ValidationError("Enter an HTTPS Tumblr post URL.");
-  }
-
-  const host = url.hostname.toLowerCase();
-  const segments = url.pathname.split("/").filter(Boolean);
-  let blog;
-  let postId;
-  if (host === "www.tumblr.com" || host === "tumblr.com") {
-    [blog, postId] = segments;
-  } else if (host.endsWith(".tumblr.com")) {
-    blog = host.slice(0, -".tumblr.com".length);
-    if (segments[0] === "post") {
-      postId = segments[1];
-    }
-  }
-
-  if (!blog || !BLOG_PATTERN.test(blog.toLowerCase()) || !/^\d+$/.test(postId || "")) {
-    throw new ValidationError("Enter a Tumblr post URL containing a blog name and post ID.");
-  }
-  return postFromId(blog, postId);
 }
 
 async function verifyPost(thread, apiKey, axios) {
@@ -244,9 +207,8 @@ function createThreadStore(file = DEFAULT_FILE, { allowMissing = false, persistP
       const thread = { title: validateTitle(title), ...parsePostUrl(url) };
       if (auId) thread.auId = auId;
       const threads = read();
-      if (threads.some((item) => item.blog === thread.blog && item.postId === thread.postId)) {
-        throw new ValidationError("This post is already tracked.");
-      }
+      const duplicate = threads.find((item) => item.blog === thread.blog && item.postId === thread.postId);
+      if (duplicate) throw new DuplicateThreadError(duplicate);
       const partner = writingPartner(thread.title);
       if (partner) {
         thread.partner = partner;
@@ -268,9 +230,8 @@ function createThreadStore(file = DEFAULT_FILE, { allowMissing = false, persistP
       if (auId) thread.auId = auId;
       if (completed === undefined ? threads[index].completed : completed) thread.completed = true;
       if (threads[index].favourite) thread.favourite = true;
-      if (threads.some((item, i) => i !== index && item.blog === thread.blog && item.postId === thread.postId)) {
-        throw new ValidationError("This post is already tracked.");
-      }
+      const duplicate = threads.find((item, i) => i !== index && item.blog === thread.blog && item.postId === thread.postId);
+      if (duplicate) throw new DuplicateThreadError(duplicate);
       const partner = writingPartner(thread.title);
       if (partner) {
         thread.partner = partner;
@@ -417,4 +378,4 @@ async function getLastReblog(thread, apiKey, axios) {
   };
 }
 
-module.exports = { createThreadStore, createBlogThreadStore, normalizeCollectionBlog, getLastReblog, getTrail, parsePostUrl, postFromId, validateTitle, verifyPost, ValidationError };
+module.exports = { createThreadStore, createBlogThreadStore, normalizeCollectionBlog, getLastReblog, getTrail, parsePostUrl, postFromId, validateTitle, verifyPost, ValidationError, DuplicateThreadError };

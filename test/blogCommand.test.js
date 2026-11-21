@@ -25,6 +25,7 @@ test("follower command uses the explicit blog, configured default, or fallback",
   const express = () => app;
   express.static = () => () => {};
   const env = { BLOG_NAME: " configured-blog " };
+  const getReblog = () => {};
   const dependencies = {
     dotenv: { config() {} },
     "./followers/tumblrcracker": { main: async (blog) => { calls.push(blog); return { success: true, data: "[]", filePath: "saved-snapshot.json" }; } },
@@ -33,7 +34,8 @@ test("follower command uses the explicit blog, configured default, or fallback",
     crypto: {},
     axios: {},
     path,
-    "./threads/threadRoutes": { createThreadRoutes: () => () => {} },
+    "./threads/threadRoutes": { createThreadRoutes: (options) => { assert.equal(options.getReblog, getReblog); return () => {}; } },
+    "./threads/reblogCache": { createReblogCache: () => ({ get: getReblog }) },
     "./config/blogConfig": { getDefaultBlog: () => (env.BLOG_NAME || "").trim() || "iobartach" },
     "./config/migrateData": { migrateData() {} },
     "./config/tumblrAuth": { createTumblrAuth: (options) => {
@@ -41,7 +43,7 @@ test("follower command uses the explicit blog, configured default, or fallback",
       return { router: () => {}, getToken: () => null };
     } },
     "./config/webConfig": { getWebConfig: () => ({ host: "127.0.0.1", port: 4321, origin: "http://localhost:4321", redirectUri: "http://localhost:4321/callback", allowedHosts: ["localhost:4321", "127.0.0.1:4321"] }) },
-    "./discord/slashCommands": { SlashCommands: class { async handle() {} } },
+    "./discord/slashCommands": { SlashCommands: class { constructor(options) { assert.equal(options.getReblog, getReblog); } async handle() {} } },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "src", "index.js"), "utf8"), {
     require: (name) => {

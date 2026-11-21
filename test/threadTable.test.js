@@ -60,6 +60,16 @@ test("paginates filtered results and clamps a page after removals", () => {
   assert.deepEqual(page([], 10, 3), { items: [], current: 1, pages: 1, total: 0, start: 0 });
 });
 
+test("paginates 25 saved asks in groups of five and clamps after removal", () => {
+  const asks = Array.from({ length: 25 }, (_, index) => index + 1);
+  const pages = Array.from({ length: 5 }, (_, index) => page(asks, 5, index + 1));
+  assert.deepEqual(pages.flatMap((result) => result.items), asks);
+  assert.ok(pages.every((result) => result.items.length === 5 && result.pages === 5));
+  const afterRemoval = page(asks.slice(0, 20), 5, 5);
+  assert.equal(afterRemoval.current, 4);
+  assert.deepEqual(afterRemoval.items, [16, 17, 18, 19, 20]);
+});
+
 test("filters ongoing, completed and favourites independently", () => {
   const entries = [
     { thread: { title: "Ongoing" } },

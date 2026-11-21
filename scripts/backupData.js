@@ -151,7 +151,7 @@ function syncData(directory, snapshot, tracked) {
   }
 }
 
-async function backup({ backupDir, dataDir = paths.data, projectDir = paths.root, remoteUrl, now = new Date(),
+async function backup({ backupDir, dataDir = paths.data, projectDir = paths.root, remoteUrl, now = new Date(), force = false,
   checkPrivate = verifyPrivateRemote, push = (dir, _remote, branch) => git(dir, ["push", "origin", `HEAD:refs/heads/${branch}`]) }) {
   const remote = parseRemote(remoteUrl);
   const directory = fs.realpathSync(backupDir);
@@ -190,8 +190,8 @@ async function backup({ backupDir, dataDir = paths.data, projectDir = paths.root
       if (!state || typeof state.date !== "string" || typeof state.remote !== "string" || typeof state.branch !== "string") {
         throw new Error("Invalid backup state.");
       }
-      if (state.date === today && state.remote.toLowerCase() === remote.url.toLowerCase() && state.branch === branch) {
-        return "A successful backup already ran today.";
+      if (!force && state.date === today && state.remote.toLowerCase() === remote.url.toLowerCase() && state.branch === branch) {
+        return "A successful backup already ran today. Add --force to run another backup.";
       }
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
@@ -230,12 +230,13 @@ async function backup({ backupDir, dataDir = paths.data, projectDir = paths.root
 }
 
 if (require.main === module) {
-  const [backupDir, remoteUrl] = process.argv.slice(2);
-  if (!backupDir || !remoteUrl || process.argv.length !== 4) {
-    console.error("Usage: node scripts\\backupData.js <backup-repository-directory> <private-github-https-url>");
+  const [backupDir, remoteUrl, option] = process.argv.slice(2);
+  if (!backupDir || !remoteUrl || process.argv.length < 4 || process.argv.length > 5 ||
+      backupDir.startsWith("--") || remoteUrl.startsWith("--") || (option !== undefined && option !== "--force")) {
+    console.error("Usage: node scripts\\backupData.js <backup-repository-directory> <private-github-https-url> [--force]");
     process.exitCode = 1;
   } else {
-    backup({ backupDir, remoteUrl }).then((result) => console.log(result)).catch((error) => {
+    backup({ backupDir, remoteUrl, force: option === "--force" }).then((result) => console.log(result)).catch((error) => {
       console.error(`Backup failed: ${error.message}`);
       process.exitCode = 1;
     });

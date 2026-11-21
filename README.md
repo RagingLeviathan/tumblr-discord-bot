@@ -1,3 +1,42 @@
+```text
+ _____ _   _ __  __ ____  _     ____
+|_   _| | | |  \/  | __ )| |   |  _ \
+  | | | | | | |\/| |  _ \| |   | |_) |
+  | | | |_| | |  | | |_) | |___|  _ <
+  |_|  \___/|_|  |_|____/|_____|_| \_\
+ ____  ___ ____   ____ ___  ____  ____
+|  _ \|_ _/ ___| / ___/ _ \|  _ \|  _ \
+| | | || |\___ \| |  | | | | |_) | | | |
+| |_| || | ___) | |__| |_| |  _ <| |_| |
+|____/|___|____/ \____\___/|_| \_\____/
+ ____   ___ _____
+| __ ) / _ \_   _|
+|  _ \| | | || |
+| |_) | |_| || |
+|____/ \___/ |_|
+```
+
+```text
+                          /\_       _/\
+                         /   `-._.-'   \
+                        /  _         _  \
+                   /\  /  /_`-.___.-'_\  \  /\
+                  /  \/      \     /      \/  \
+           /|    /_/|    .--._\   /_.--.    |\_\    |\
+         _/ |___/  /    /     `-.-'     \    \  \___| \_
+        /   / _/  /    |  \V\       /V/  |    \  \_ \   \
+    /\_/   /_/   /     |   \ \     / /   |     \   \_\   \_/\
+   /    __/    _/      |    \ `. .' /    |      \_    \__    \
+  /_.-''   _.-'  \      \   .\  Y  /.   /      /  `-._   ``-._\
+        .-'  _.-~ \      `-/\_\___/_/\-'      / ~-._  `-.
+   _.-~~  .-'  _.-~~\       \       /       /~~-._  `-.  ~~-._
+ ~'   _.-~  .-~     ~`-._    \  |  /    _.-'~     ~-.  ~-._   `~
+  _.-~  .--'    _.-~     ~---.`-^-' .---~     ~-._    `--.  ~-._
+ ~   .-~   _.-~~   .-~\__     ~-._.-~     __/~-.   ~~-._   ~-.   ~
+   ~~   ~~~      ~~      ~~-._       _.-~~      ~~      ~~~   ~~
+              ~~~             ~~~~~~~             ~~~
+```
+
 # tumblr-discord-bot
 
 Leveraging the Tumblr API through a Discord bot.
@@ -21,6 +60,40 @@ server and local data; do not expose it through a proxy or tunnel. A future
 multi-user deployment would require separate credentials and sessions, access
 controls, HTTPS and a security review.
 
+## Hosting options
+
+The Discord bot and web tracker run in the same Node.js process. The bot is
+available only while that process and its host are running and connected to
+Discord; a sleeping or shut-down laptop cannot keep it online.
+
+| Option | How to run it | Tracker access |
+| --- | --- | --- |
+| Your Windows computer | Run `npm start` in the project directory, or use Task Scheduler to start it at sign-in. | Open `http://localhost:3000/threads/` on that computer. |
+| A dedicated home computer or Raspberry Pi | Install Node.js and the project, configure `.env`, then run `npm start`. Use an OS service such as systemd to start and restart it. Keep the machine awake. | Use a browser on that machine, including through a secured private remote desktop. |
+| A cloud virtual machine | Set up the project on a persistent VM and use its service manager to keep the process running. Expect hosting and storage costs. | A desktop/browser on the VM is needed for the tracker. Use a secured private remote desktop; do not expose the tracker itself to the internet. |
+
+For Windows Task Scheduler, create a task triggered **At log on**, choose
+**Run only when user is logged on**, and use the full path to `node.exe` as the
+program, `index.js` as the argument, and the project's full path as **Start in**.
+Check the task history and application output if it fails, and configure Windows
+power settings if you need it to stay awake. Run only one bot instance against
+the same data directory.
+
+On any host, install dependencies with `npm install`, configure the Tumblr and
+Discord credentials in `.env`, and keep that file private. The `data/` directory
+must be writable and persistent across restarts and deployments; back it up
+separately. The private GitHub backup instructions below are Windows-specific.
+Browser settings and uploaded banner images are stored in that browser, not in
+`data/`. The Tumblr authorization token is held only in process memory, so
+authorize again after a restart or expiry using a browser on the host. Register
+the matching `http://localhost:<port>/callback` with Tumblr.
+
+Static hosting, serverless functions, and hosts that sleep, replace their local
+filesystem, or require a publicly reachable web port are not suitable as-is.
+The tracker binds to loopback and has no web login; do not publish it via a
+reverse proxy, tunnel, or public port. Remote desktop access also needs its own
+security and should not be exposed directly to the public internet.
+
 ## Project layout and data
 
 - `index.js` starts the bot; `src/` contains the bot, web routes, configuration,
@@ -32,6 +105,8 @@ controls, HTTPS and a security review.
 - `data/follower-snapshots/` stores slash-command follower snapshots;
   `data/legacy/` stores legacy follower files and comparison reports.
 - `data/slash-audit/` stores the slash-command audit.
+- `data/reblog-cache.json` stores shared cached reblog results and rate-limit
+  cooldown information.
 
 On Windows, the root folder has shortcuts to each data folder. If you move or
 copy the project, recreate them from the new location with
@@ -56,6 +131,7 @@ tracked legacy files `missing_names.json` and `new_followers.json`.
 The optional backup script mirrors the entire `data/` folder to a **separate
 private GitHub repository**. This includes threads, follower snapshots, legacy
 data and the slash-command audit; it does not back up the bot code or `.env`.
+The shared `data/reblog-cache.json` file is included when present.
 Files named `.env` or `.env.*` and files ending in `.tmp` are skipped. The
 script refuses symbolic links and credential-like filenames.
 
@@ -113,6 +189,17 @@ Replace the example paths and repository URL with your own:
    avoid writes during backup, particularly changes spanning multiple files.
    Check the output, inspect the private repository on GitHub, and test a
    restore before relying on it.
+
+To run another manual backup on the same day, add `--force`:
+
+```powershell
+node "C:\Users\YOURNAME\tumblr-discord-bot\scripts\backupData.js" "C:\Users\YOURNAME\tumblr-discord-bot-DATA" "https://github.com/YOURNAME/tumblr-discord-bot-DATA.git" --force
+```
+
+This only bypasses the once-per-day skip; privacy and safety checks still run,
+and Git does **not** force-push. If a forced push fails after a successful
+backup earlier that day, retry manually with `--force`: scheduled runs will
+still skip that day because of the earlier success.
 
 ### Schedule daily backups
 
@@ -192,9 +279,12 @@ posts, rate limits, and other API errors are shown separately.
    [http://localhost:3000/threads/](http://localhost:3000/threads/).
 3. Enter who you are writing with and, optionally, a story name; the page
    formats the title as `w/ partner | story name`, using `n/a` when the story
-   name is blank. Enter the post ID and the blog that published
-   that particular post, or choose **Post URL** and enter its URL instead.
-   Post ID is the default.
+   name is blank. The story name uses your browser's spellchecker, if available.
+   Enter the post ID and the blog that published
+   that particular post, or paste its link into **Paste post URL** to fill
+   both fields automatically. Alternatively, choose **Post URL** and enter its
+   URL instead.
+   Post ID is the default; choose a different default in the header settings.
    The blog defaults to `BLOG_NAME` from `.env`, or `iobartach` when unset;
    you can change it per post. Tumblr verifies post-ID entries before they are
    saved, so an API key and a publicly accessible post are required. A missing,
@@ -206,6 +296,25 @@ posts, rate limits, and other API errors are shown separately.
    post ID does not need to be verified again. Existing titles that do not
    follow the `w/ partner | story name` format appear in the story field and
    are preserved; add a partner to convert them to the new format.
+   If a post is already tracked, the message identifies the matching thread
+   and links to the post without clearing the form.
+
+Use **Saved asks** to manually save Tumblr ask links with an optional note. The
+button counts the links remaining in the list, not the contents of your Tumblr
+inbox. The list shows five asks per page. Open a link while logged in to Tumblr;
+**Answered** and **Remove** both remove it from this list only and do not change
+Tumblr. No Tumblr API calls are
+made to save or list asks. Links are not verified and may stop working after an
+ask is answered or removed on Tumblr. Each configured blog has its own list in
+`data/threads/asks_<blog-name>.json`, included in the private data backup.
+
+Use the **gear** in the header to change the accent colour, text size, table
+density, default page size, default post reference and writing-partner
+highlights. You can hide the header image, upload a replacement (PNG, JPEG,
+WebP or GIF, up to 2 MB), or restore the default. Save to apply changes; changing the table's page-size
+filter remains temporary. Settings and uploaded images are stored only in this
+browser for this address, not in `data/` or its backup. Clearing browser data
+removes them. Browser storage must be available and have enough space.
 
 Use **Search ID** to open a Google search for the saved post ID on Tumblr.
 Google receives the ID only when you click the link; results depend on what
@@ -232,6 +341,9 @@ Use the thread title and last reblogger search fields for case-insensitive
 partial matches. The reblogger search uses the displayed saved-post author
 when there are no reblogs; loading or failed lookups do not match until an
 author is known. These searches combine with the other filters.
+Long titles, AU names, blog names and dates can be truncated in the table;
+hover over them to see them in full. Searching and sorting still use the full
+values. On narrower screens, scroll the table horizontally to see all columns.
 
 The writing partner filter groups matching partner names case-insensitively.
 Threads sharing a partner are highlighted, even if other filters hide some
@@ -242,9 +354,27 @@ without the `w/ partner | story name` format are preserved but do not appear
 in the partner filter. Stop old bot processes before starting this version so
 they cannot overwrite the new numbers.
 
-Choose 10, 25, 50, or 100 records per page and use **Previous** and **Next**
-to navigate the filtered, sorted results. All reblog details are still fetched
-on refresh, including those on other pages.
+Choose 10, 25, 50, or 100 records per page and use **First**, **Previous**,
+**Next**, and **Last** to navigate the filtered, sorted results. Reblog details
+for all pages are loaded so sorting and filtering can use them.
+
+The web tracker and `/thread latest` share `data/reblog-cache.json`, including
+across bot restarts. A successful lookup is reused for one hour; after that,
+the next page load, **Refresh**, or `/thread latest` checks Tumblr again. The
+display shows when the information was last checked. Refresh does not bypass
+the one-hour cache. Requests for the same post are combined, and Tumblr
+requests for reblog lookups are made one at a time, at least one second apart.
+A first load with many uncached threads can therefore take a while.
+
+If Tumblr returns HTTP 429, further reblog lookups pause until its `Retry-After`
+time, or for 15 minutes when it provides no usable time. The pause survives a
+restart. Other failed lookups wait one minute before retrying. When an older
+result exists, it is shown with its last-check time and a warning; without a
+cached result, the error is shown instead. Refresh again after the pause:
+there is no background polling. Adding a post by ID, trail lookups and other
+Discord commands make their own API calls and do not use this reblog cache or
+its queue. The cache may retain results for removed threads; stop the bot before
+editing or deleting it. Deleting it also clears the locally recorded cooldown.
 
 Tick the checkbox next to a thread to mark it completed; untick it to return
 it to ongoing. You can also change completion while editing the thread; the

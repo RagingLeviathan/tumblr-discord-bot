@@ -6,24 +6,30 @@
   <title>Tracked Tumblr threads</title>
   <link rel="stylesheet" href="style.css">
   <script src="tableState.js" defer></script>
+  <script src="postReference.js" defer></script>
   <script src="threads.js" defer></script>
+  <script src="settings.js" defer></script>
 </head>
 <body>
-  <header><span class="brand">TUMBLR THREAD TRACKER</span></header>
+  <header><span class="brand">TUMBLR THREAD TRACKER</span><button id="open-settings" type="button" aria-label="Settings" title="Settings">&#9881;</button></header>
   <main>
+    <p id="settings-warning" class="error" role="status" aria-live="polite" hidden></p>
     <div class="heading">
       <div class="heading-copy">
         <p class="eyebrow">YOUR THREADS</p>
         <h1>Tracked threads</h1>
         <p>See who most recently reblogged each saved post.</p>
       </div>
-      <img class="heading-art" src="nueva-york-hive-runner-header.png" alt="">
-      <button id="refresh" type="button">Refresh</button>
+      <img class="heading-art" src="blue-and-white-leviathan-pixel-banner.png" alt="">
+      <div class="heading-actions">
+        <button id="manage-asks" type="button" class="secondary" disabled>Saved asks (?)</button>
+        <button id="refresh" type="button">Refresh</button>
+      </div>
     </div>
     <div class="add-form">
       <form id="add-thread" class="thread-fields">
         <label>Writing with<input name="partner" maxlength="200" required placeholder="e.g. thera"></label>
-        <label>Story name (optional)<input name="story" maxlength="200" autocomplete="off" placeholder="Defaults to n/a"></label>
+        <label>Story name (optional)<input name="story" maxlength="200" autocomplete="off" spellcheck="true" placeholder="Defaults to n/a"></label>
         <label>AU<select name="auId"><option value="">No AU</option></select></label>
         <label>Post reference
           <select name="referenceType">
@@ -34,6 +40,7 @@
         <label id="url-field" hidden>Tumblr post URL<input name="url" type="url" disabled placeholder="https://www.tumblr.com/blog/post-id"></label>
         <label id="blog-field">Blog name<input name="blog" required placeholder="e.g. iobartach"></label>
         <label id="id-field">Post ID<input name="postId" type="text" inputmode="numeric" pattern="[0-9]+" required aria-describedby="post-id-help" placeholder="e.g. 789524026478493696"><span id="post-id-help">Digits only.</span></label>
+        <label id="extract-url-field">Paste post URL (optional)<input name="extractUrl" type="text" autocomplete="off" aria-describedby="extract-url-help" placeholder="https://www.tumblr.com/blog/post-id"><span id="extract-url-help" role="status" aria-live="polite">Fills the post ID and blog name.</span></label>
       </form>
       <div class="form-actions">
         <button id="track-thread" type="submit" form="add-thread">Track thread</button>
@@ -49,6 +56,7 @@
     </div>
     <p class="hint">Titles are formatted as <strong>w/ partner | story name</strong>.</p>
     <p class="hint">For a post ID, use the blog that published that specific post. Tumblr checks access before it is saved.</p>
+    <p id="ask-count-status" class="error" role="status" aria-live="polite"></p>
     <p id="message" role="status" aria-live="polite"></p>
     <div class="table-controls">
       <label>Filter by thread title<input id="title-filter" type="search" placeholder="Search titles"></label>
@@ -58,19 +66,81 @@
       <label>Filter by status<select id="status-filter"><option value="all">All threads</option><option value="ongoing">Ongoing</option><option value="completed">Completed</option><option value="favourites">Favourites</option></select></label>
       <label>Records per page<select id="page-size"><option>10</option><option>25</option><option>50</option><option>100</option></select></label>
     </div>
-    <p class="hint">Tick a thread when completed; select its star to mark it as a favourite. Threads sharing a writing partner are highlighted.</p>
+    <p class="hint">Tick a thread when completed; select its star to mark it as a favourite. <span id="partner-highlight-hint">Threads sharing a writing partner are highlighted.</span></p>
     <div class="table-wrap">
       <table>
+        <colgroup>
+          <col class="title-column"><col class="au-column"><col class="blog-column">
+          <col class="reblogger-column"><col class="date-column"><col class="actions-column">
+        </colgroup>
         <thead><tr><th scope="col" aria-sort="none"><button class="sort" type="button" data-sort="title">Thread title <span aria-hidden="true"></span></button></th><th scope="col">AU</th><th scope="col" aria-sort="none"><button class="sort" type="button" data-sort="blog">Root blog <span aria-hidden="true"></span></button></th><th scope="col" aria-sort="none"><button class="sort" type="button" data-sort="reblogger">Last reblogger <span aria-hidden="true"></span></button></th><th scope="col" aria-sort="none"><button class="sort" type="button" data-sort="date">Last reblog date <span aria-hidden="true"></span></button></th><th scope="col" class="actions-heading">Actions</th></tr></thead>
         <tbody id="threads"></tbody>
       </table>
     </div>
     <nav class="pagination" aria-label="Thread pages">
+      <button id="first-page" type="button" class="secondary" aria-label="First page">First</button>
       <button id="previous-page" type="button" class="secondary">Previous</button>
       <span id="page-status" aria-live="polite"></span>
       <button id="next-page" type="button" class="secondary">Next</button>
+      <button id="last-page" type="button" class="secondary" aria-label="Last page">Last</button>
     </nav>
     <p class="hint">The latest reblog can be from any branch, not necessarily your roleplay partner.</p>
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+      <h2 id="settings-title">Settings</h2>
+      <p class="hint">Saved only in this browser on this address. These settings are not included in data backups.</p>
+      <form id="settings-form" class="settings-form">
+        <fieldset>
+          <legend>Header image</legend>
+          <label class="filter-toggle"><input name="showImage" type="checkbox"> Show header image</label>
+          <label>Replacement image<input name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+          <p class="hint">PNG, JPEG, WebP or GIF, up to 2 MB. Saved in this browser only.</p>
+          <button id="settings-default-image" type="button" class="secondary">Use default image</button>
+          <p id="settings-image-status" class="hint"></p>
+        </fieldset>
+        <fieldset>
+          <legend>Appearance</legend>
+          <label>Accent colour<select name="accent"><option value="blue">Blue</option><option value="teal">Teal</option><option value="purple">Purple</option><option value="rose">Rose</option></select></label>
+          <label>Text size<select name="textSize"><option value="normal">Normal</option><option value="large">Large</option><option value="larger">Larger</option></select></label>
+          <label>Table density<select name="density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option><option value="spacious">Spacious</option></select></label>
+          <label class="filter-toggle"><input name="partnerHighlights" type="checkbox"> Highlight threads with the same writing partner</label>
+        </fieldset>
+        <fieldset>
+          <legend>Table</legend>
+          <label>Default records per page<select name="pageSize"><option>10</option><option>25</option><option>50</option><option>100</option></select></label>
+          <p class="hint">You can still change this temporarily using the table filter.</p>
+        </fieldset>
+        <fieldset>
+          <legend>Thread entry</legend>
+          <label>Default post reference<select name="postReference"><option value="id">Post ID</option><option value="url">Post URL</option></select></label>
+          <p class="hint">You can still choose a different reference when adding or editing a thread.</p>
+        </fieldset>
+        <div class="settings-actions">
+          <button type="submit">Save settings</button>
+          <button id="settings-reset" type="button" class="secondary">Reset all</button>
+          <button id="settings-close" type="button" class="secondary">Cancel</button>
+        </div>
+      </form>
+      <p id="settings-message" role="status" aria-live="polite"></p>
+    </dialog>
+    <dialog id="ask-dialog" aria-labelledby="ask-title">
+      <h2 id="ask-title">Asks to answer</h2>
+      <p class="hint">Save links manually, then open them on Tumblr while logged in. Marking one answered removes it from this list, not from Tumblr.</p>
+      <form id="ask-form" class="ask-form">
+        <label>Tumblr ask link<input name="url" type="url" maxlength="2048" required placeholder="https://www.tumblr.com/blog/post-id"></label>
+        <label>Note (optional)<input name="note" maxlength="500" placeholder="Who sent it or what it's about"></label>
+        <div><button type="submit">Save ask</button></div>
+      </form>
+      <p id="ask-message" role="status" aria-live="polite"></p>
+      <ul id="ask-list" class="ask-list"></ul>
+      <nav id="ask-pagination" class="pagination ask-pagination" aria-label="Ask pages" hidden>
+        <button id="ask-first" type="button" class="secondary" aria-label="First ask page">First</button>
+        <button id="ask-previous" type="button" class="secondary">Previous</button>
+        <span id="ask-page-status" aria-live="polite"></span>
+        <button id="ask-next" type="button" class="secondary">Next</button>
+        <button id="ask-last" type="button" class="secondary" aria-label="Last ask page">Last</button>
+      </nav>
+      <button id="ask-close" type="button" class="secondary">Close</button>
+    </dialog>
     <dialog id="au-dialog" aria-labelledby="au-title">
       <h2 id="au-title">Manage AUs</h2>
       <form id="au-form" class="au-form">
@@ -100,6 +170,12 @@
       <ol id="trail-results"></ol>
     </dialog>
   </main>
-  <footer>&copy; <span id="copyright-year"></span> Developed by Raging Leviathan</footer>
+  <footer>
+    &copy; <span id="copyright-year"></span> Developed by
+    <a class="footer-profile" href="https://github.com/RagingLeviathan" target="_blank" rel="noopener noreferrer" aria-label="Raging Leviathan on GitHub">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+      <span>Raging Leviathan</span>
+    </a>
+  </footer>
 </body>
 </html>

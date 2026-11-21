@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const { execFileSync, spawnSync } = require("node:child_process");
 const { backup, parseRemote, stableSnapshot, verifyPrivateRemote } = require("../scripts/backupData");
 
 function command(directory, ...args) {
@@ -62,6 +62,7 @@ test("backs up validated data, retries failed pushes and mirrors deletions in Gi
   command(f.backupDir, "config", "core.autocrlf", "true");
   fs.mkdirSync(path.join(f.dataDir, "threads"));
   fs.writeFileSync(path.join(f.dataDir, "threads", "tracked.json"), '{"thread":1}\r\n');
+  fs.writeFileSync(path.join(f.dataDir, "reblog-cache.json"), '{"entries":[]}\n');
   fs.writeFileSync(path.join(f.dataDir, "threads", "literal[1].json"), '{"literal":true}\n');
   fs.writeFileSync(path.join(f.dataDir, ".env"), "excluded");
   fs.writeFileSync(path.join(f.dataDir, "threads", "pending.tmp"), "temporary");
@@ -83,6 +84,7 @@ test("backs up validated data, retries failed pushes and mirrors deletions in Gi
   assert.equal(fs.existsSync(path.join(f.backupDir, "data", ".env")), false);
   assert.equal(fs.existsSync(path.join(f.backupDir, "data", "threads", "pending.tmp")), false);
   assert.equal(command(f.backupDir, "show", "HEAD:data/threads/tracked.json"), '{"thread":1}');
+  assert.equal(command(f.backupDir, "show", "HEAD:data/reblog-cache.json"), '{"entries":[]}');
   assert.equal(command(f.backupDir, "show", "HEAD:data/threads/literal[1].json"), '{"literal":true}');
   fs.unlinkSync(path.join(f.dataDir, "threads", "tracked.json"));
   fs.writeFileSync(path.join(f.dataDir, "threads", "new.json"), '{"thread":2}\n');
@@ -111,6 +113,42 @@ test("refuses unsafe destinations, dirty repositories and invalid data without p
   fs.unlinkSync(path.join(f.dataDir, "broken.json"));
   fs.writeFileSync(path.join(f.dataDir, "credentials.json"), "{}");
   assert.throws(() => stableSnapshot(f.dataDir), /potentially sensitive/);
+});
+
+test("force retries a same-day backup without bypassing safety checks", async (t) => {
+  const f = fixture(t);
+  const file = path.join(f.dataDir, "data.json");
+  fs.writeFileSync(file, '{"version":1}\n');
+  let pushes = 0;
+  const options = { ...f, now: new Date(2026, 0, 1), checkPrivate: async () => {}, push: async () => { pushes++; } };
+  await backup(options);
+  fs.writeFileSync(file, '{"version":2}\n');
+  assert.match(await backup(options), /--force/);
+  assert.equal(pushes, 1);
+  assert.equal(command(f.backupDir, "show", "HEAD:data/data.json"), '{"version":1}');
+
+  await assert.rejects(backup({ ...options, force: true, checkPrivate: async () => { throw new Error("Not private"); } }), /Not private/);
+  fs.writeFileSync(path.join(f.backupDir, "unrelated.txt"), "keep");
+  await assert.rejects(backup({ ...options, force: true }), /uncommitted changes/);
+  fs.unlinkSync(path.join(f.backupDir, "unrelated.txt"));
+  await assert.rejects(backup({ ...options, force: true, push: async () => { throw new Error("Offline"); } }), /Offline/);
+  assert.match(await backup(options), /already ran today/);
+  assert.match(await backup({ ...options, force: true }), /pushed/);
+  assert.equal(pushes, 2);
+  assert.equal(command(f.backupDir, "show", "HEAD:data/data.json"), '{"version":2}');
+});
+
+test("command accepts --force and rejects unknown options", () => {
+  const script = path.join(__dirname, "..", "scripts", "backupData.js");
+  const run = (...args) => spawnSync(process.execPath, [script, "unused", "not-a-url", ...args], { encoding: "utf8" });
+  const forced = run("--force");
+  assert.equal(forced.status, 1);
+  assert.match(forced.stderr, /Provide an HTTPS GitHub repository URL/);
+  for (const args of [["--unknown"], ["--force", "--force"]]) {
+    const invalid = run(...args);
+    assert.equal(invalid.status, 1);
+    assert.match(invalid.stderr, /Usage:.*\[--force\]/);
+  }
 });
 
 test("does not overwrite ignored files or follow links in the backup checkout", async (t) => {

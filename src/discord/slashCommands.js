@@ -57,8 +57,8 @@ function auditPostUrl(value) {
 }
 
 class SlashCommands {
-  constructor({ store = createBlogThreadStore(), api = axios, snapshots = createFollowerSnapshots(), audit = createSlashAudit(), getOwner = () => process.env.DISCORD_OWNER_ID, getApiKey = () => process.env.CONSUMER_KEY, getBlog = getDefaultBlog } = {}) {
-    Object.assign(this, { store, api, snapshots, audit, getOwner, getApiKey, getBlog });
+  constructor({ store = createBlogThreadStore(), api = axios, snapshots = createFollowerSnapshots(), audit = createSlashAudit(), getOwner = () => process.env.DISCORD_OWNER_ID, getApiKey = () => process.env.CONSUMER_KEY, getBlog = getDefaultBlog, getReblog = getLastReblog } = {}) {
+    Object.assign(this, { store, api, snapshots, audit, getOwner, getApiKey, getBlog, getReblog });
   }
 
   async handle(interaction) {
@@ -168,14 +168,17 @@ class SlashCommands {
         if (!thread) throw new ValidationError("Tracked thread not found.");
         const key = this.getApiKey();
         if (!key) throw new ValidationError("Set CONSUMER_KEY in .env to fetch Tumblr notes.");
-        const { lastReblog, savedPost } = await getLastReblog(thread, key, this.api);
+        const { lastReblog, savedPost, cache } = await this.getReblog(thread, key, this.api);
+        const cacheInfo = cache
+          ? `\nLast checked: ${new Date(cache.checkedAt).toISOString()}.${cache.stale ? ` ${cache.warning}` : ""}`
+          : "";
         if (!lastReblog) {
           const date = new Date(savedPost.timestamp * 1000).toISOString();
-          return { content: `**${safeText(thread.title.slice(0, 200))}**\nNo reblogs found. Saved post by: ${safeText(savedPost.blog)}\nDate: ${date}${savedPost.url.length < 1200 ? `\n${savedPost.url}` : ""}` };
+          return { content: `**${safeText(thread.title.slice(0, 200))}**\nNo reblogs found. Saved post by: ${safeText(savedPost.blog)}\nDate: ${date}${savedPost.url.length < 1200 ? `\n${savedPost.url}` : ""}${cacheInfo}` };
         }
         const date = new Date(lastReblog.timestamp * 1000);
         const when = Number.isNaN(date.getTime()) ? "Unknown date" : date.toISOString();
-        return { content: `**${safeText(thread.title.slice(0, 200))}**\nLast reblogger: ${safeText(lastReblog.blog)}\nDate: ${when}${lastReblog.url && lastReblog.url.length < 1200 ? `\n${lastReblog.url}` : ""}\nThis may be from any branch.` };
+        return { content: `**${safeText(thread.title.slice(0, 200))}**\nLast reblogger: ${safeText(lastReblog.blog)}\nDate: ${when}${lastReblog.url && lastReblog.url.length < 1200 ? `\n${lastReblog.url}` : ""}\nThis may be from any branch.${cacheInfo}` };
       }
     }
     const blog = normalizeBlog(getString("blog") || this.getBlog());

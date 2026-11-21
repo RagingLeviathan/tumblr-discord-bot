@@ -8,6 +8,8 @@ const referenceType = form.elements.referenceType;
 const blogInput = form.elements.blog;
 const idInput = form.elements.postId;
 const urlInput = form.elements.url;
+const extractUrlInput = form.elements.extractUrl;
+const extractUrlHelp = document.querySelector("#extract-url-help");
 const partnerInput = form.elements.partner;
 const storyInput = form.elements.story;
 const auInput = form.elements.auId;
@@ -21,8 +23,10 @@ const statusFilter = document.querySelector("#status-filter");
 const favouritesFirst = document.querySelector("#favourites-first");
 const pageSize = document.querySelector("#page-size");
 const pageStatus = document.querySelector("#page-status");
+const firstPage = document.querySelector("#first-page");
 const previousPage = document.querySelector("#previous-page");
 const nextPage = document.querySelector("#next-page");
+const lastPageButton = document.querySelector("#last-page");
 const auDialog = document.querySelector("#au-dialog");
 const auForm = document.querySelector("#au-form");
 const auMessage = document.querySelector("#au-message");
@@ -41,6 +45,23 @@ const trailStatus = document.querySelector("#trail-status");
 const trailResults = document.querySelector("#trail-results");
 const trailPublic = document.querySelector("#trail-public");
 const trailAuthenticated = document.querySelector("#trail-authenticated");
+const askButton = document.querySelector("#manage-asks");
+const askCountStatus = document.querySelector("#ask-count-status");
+const askDialog = document.querySelector("#ask-dialog");
+const askForm = document.querySelector("#ask-form");
+const askSubmit = askForm.querySelector('button[type="submit"]');
+const askMessage = document.querySelector("#ask-message");
+const askList = document.querySelector("#ask-list");
+const askPagination = document.querySelector("#ask-pagination");
+const askFirst = document.querySelector("#ask-first");
+const askPrevious = document.querySelector("#ask-previous");
+const askNext = document.querySelector("#ask-next");
+const askLast = document.querySelector("#ask-last");
+const askPageStatus = document.querySelector("#ask-page-status");
+let asks = [];
+let askRequest = 0;
+let askPage = 1;
+let askBusy = false;
 let trailThread = null;
 let trailRequest = 0;
 let defaultBlog = null;
@@ -49,17 +70,27 @@ let aus = [];
 let ausLoaded = false;
 let editingAu = null;
 let currentPage = 1;
+let lastPage = 1;
 let sortKey = null;
 let sortDirection = "ascending";
 let emptyRow = null;
 let editingThread = null;
 let originalTitleFields = null;
 let lastValidPostId = idInput.value;
+let defaultPostReference = "id";
+
+function clearExtractUrl() {
+  extractUrlInput.value = "";
+  extractUrlInput.setCustomValidity("");
+  extractUrlHelp.textContent = "Fills the post ID and blog name.";
+}
 
 function resetForm() {
   editingThread = null;
   originalTitleFields = null;
   form.reset();
+  referenceType.value = defaultPostReference;
+  clearExtractUrl();
   lastValidPostId = idInput.value;
   partnerInput.required = true;
   submitButton.textContent = "Track thread";
@@ -69,13 +100,14 @@ function resetForm() {
 }
 
 function editThread(thread) {
+  clearExtractUrl();
   editingThread = thread;
   const formatted = /^w\/\s+(.+?)\s+\|\s+(.+)$/i.exec(thread.title);
   partnerInput.value = formatted ? formatted[1] : "";
   storyInput.value = formatted ? formatted[2] : thread.title;
   originalTitleFields = { partner: partnerInput.value, story: storyInput.value };
   partnerInput.required = Boolean(formatted);
-  referenceType.value = "id";
+  referenceType.value = defaultPostReference;
   urlInput.value = thread.url;
   blogInput.value = thread.blog;
   idInput.value = thread.postId;
@@ -100,10 +132,11 @@ function updateReferenceFields() {
     [document.querySelector("#url-field"), urlInput, !isId],
     [document.querySelector("#blog-field"), blogInput, isId],
     [document.querySelector("#id-field"), idInput, isId],
+    [document.querySelector("#extract-url-field"), extractUrlInput, isId],
   ]) {
     field.hidden = !active;
     input.disabled = !active;
-    input.required = active;
+    input.required = active && input !== extractUrlInput;
   }
 }
 
@@ -118,6 +151,16 @@ async function loadDefaultBlog() {
     defaultBlog = newBlog;
     blogInput.defaultValue = config.defaultBlog;
     if (changed) {
+      askRequest++;
+      asks = [];
+      askPage = 1;
+      askPagination.hidden = true;
+      setAskBusy(false);
+      askButton.textContent = "Saved asks (?)";
+      askList.replaceChildren();
+      askForm.reset();
+      askMessage.textContent = "";
+      if (askDialog.open) askDialog.close();
       resetForm();
       table.replaceChildren();
       items = [];
@@ -127,12 +170,160 @@ async function loadDefaultBlog() {
     filterHelp.textContent = `Excludes ${config.defaultBlog} and threads with no known reblogger.`;
     updateTable();
   } catch (error) {
+    askButton.disabled = true;
+    askButton.textContent = "Saved asks (?)";
+    askCountStatus.textContent = "Saved asks are unavailable until the configured blog can be loaded.";
     message.textContent = `Could not load default blog: ${error.message}`;
     filterHelp.textContent = "Filter unavailable: could not load the configured blog.";
     otherRebloggers.disabled = true;
     throw error;
   }
 }
+
+function setAskBusy(busy) {
+  askBusy = busy;
+  askSubmit.disabled = busy;
+  askList.querySelectorAll("button").forEach((button) => { button.disabled = busy; });
+  const pages = Math.max(1, Math.ceil(asks.length / 5));
+  askFirst.disabled = askPrevious.disabled = busy || askPage <= 1;
+  askNext.disabled = askLast.disabled = busy || askPage >= pages;
+}
+
+function renderAsks() {
+  askList.replaceChildren();
+  const page = ThreadTable.page(asks, 5, askPage);
+  askPage = page.current;
+  askPagination.hidden = !page.total;
+  askPageStatus.textContent = page.total
+    ? `Page ${page.current} of ${page.pages} · ${page.start + 1}–${page.start + page.items.length} of ${page.total}`
+    : "";
+  setAskBusy(askBusy);
+  if (!asks.length) {
+    const empty = document.createElement("li");
+    empty.textContent = "No saved asks.";
+    askList.append(empty);
+    return;
+  }
+  for (const ask of page.items) {
+    const row = document.createElement("li");
+    const details = document.createElement("div");
+    details.className = "ask-details";
+    const link = document.createElement("a");
+    link.href = ask.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = `${ask.blog} / ${ask.postId}`;
+    details.append(link);
+    if (ask.note) {
+      const note = document.createElement("p");
+      note.className = "hint";
+      note.textContent = ask.note;
+      details.append(note);
+    }
+    for (const action of ["Answered", "Remove"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "secondary";
+      button.textContent = action;
+      button.disabled = askBusy;
+      button.setAttribute("aria-label", `${action} ask ${ask.blog} / ${ask.postId}`);
+      button.addEventListener("click", async () => {
+        const prompt = action === "Answered"
+          ? "Mark this ask answered and remove it from this list? This does not change Tumblr."
+          : "Remove this ask from this list? This does not change Tumblr.";
+        if (!window.confirm(prompt)) return;
+        const blog = defaultBlog;
+        askRequest++;
+        setAskBusy(true);
+        try {
+          await request(`/api/threads/asks/${encodeURIComponent(ask.id)}`, { method: "DELETE" });
+          if (defaultBlog !== blog) return;
+          try {
+            await loadAsks();
+            askMessage.textContent = action === "Answered" ? "Ask marked answered and removed." : "Ask removed.";
+          } catch (error) {
+            askMessage.textContent = `Ask removed, but the list could not be reloaded: ${error.message}`;
+          }
+        } catch (error) {
+          if (defaultBlog === blog) askMessage.textContent = error.message;
+        } finally {
+          if (defaultBlog === blog) {
+            setAskBusy(false);
+          }
+        }
+      });
+      row.append(button);
+    }
+    row.prepend(details);
+    askList.append(row);
+  }
+}
+
+async function loadAsks({ showLast = false } = {}) {
+  const blog = defaultBlog;
+  const current = ++askRequest;
+  try {
+    const result = await request("/api/threads/asks");
+    if (!Array.isArray(result)) throw new Error("The saved ask list is invalid.");
+    if (current !== askRequest || blog !== defaultBlog) return;
+    asks = result;
+    if (showLast) askPage = Math.max(1, Math.ceil(asks.length / 5));
+    askButton.textContent = `Saved asks (${asks.length})`;
+    askCountStatus.textContent = "";
+    renderAsks();
+  } catch (error) {
+    if (current === askRequest && blog === defaultBlog) {
+      asks = [];
+      askList.replaceChildren();
+      askPagination.hidden = true;
+      askButton.textContent = "Saved asks (?)";
+      askCountStatus.textContent = `Could not load saved asks: ${error.message}`;
+    }
+    throw error;
+  }
+}
+
+askButton.addEventListener("click", async () => {
+  askMessage.textContent = "";
+  setAskBusy(true);
+  askDialog.showModal();
+  try {
+    await loadAsks();
+  } catch (error) {
+    askMessage.textContent = error.message;
+  } finally {
+    setAskBusy(false);
+  }
+});
+askFirst.addEventListener("click", () => { askPage = 1; renderAsks(); });
+askPrevious.addEventListener("click", () => { askPage--; renderAsks(); });
+askNext.addEventListener("click", () => { askPage++; renderAsks(); });
+askLast.addEventListener("click", () => { askPage = Math.max(1, Math.ceil(asks.length / 5)); renderAsks(); });
+document.querySelector("#ask-close").addEventListener("click", () => askDialog.close());
+askForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const blog = defaultBlog;
+  askRequest++;
+  setAskBusy(true);
+  try {
+    await request("/api/threads/asks", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: askForm.elements.url.value, note: askForm.elements.note.value }),
+    });
+    if (defaultBlog !== blog) return;
+    askForm.reset();
+    try {
+      await loadAsks({ showLast: true });
+      askMessage.textContent = "Ask saved.";
+    } catch (error) {
+      askMessage.textContent = `Ask saved, but the list could not be reloaded: ${error.message}`;
+    }
+  } catch (error) {
+    if (defaultBlog === blog) askMessage.textContent = error.message;
+  } finally {
+    setAskBusy(false);
+  }
+});
 
 async function request(url, options) {
   const headers = { ...(options && options.headers) };
@@ -145,7 +336,11 @@ async function request(url, options) {
       : `Request failed (${response.status}).`);
   }
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
+  if (!response.ok) {
+    const error = new Error(data.error || `Request failed (${response.status}).`);
+    error.duplicate = data.duplicate;
+    throw error;
+  }
   return data;
 }
 
@@ -162,7 +357,9 @@ function cell(row, value) {
 function linkCell(row, text, url) {
   const element = cell(row, "");
   const link = document.createElement("a");
+  link.className = "thread-title-link";
   link.textContent = text;
+  link.title = text;
   link.href = url;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
@@ -173,6 +370,7 @@ function linkCell(row, text, url) {
 function renderThread(thread) {
   const row = table.insertRow();
   const title = linkCell(row, thread.title, thread.url);
+  title.className = "thread-title";
   const duplicateNotice = document.createElement("span");
   duplicateNotice.className = "sr-only";
   duplicateNotice.textContent = "Shared writing partner. ";
@@ -227,9 +425,15 @@ function renderThread(thread) {
   completed.addEventListener("change", () => saveFlags({ completed: completed.checked }));
   favourite.addEventListener("click", () => saveFlags({ favourite: !thread.favourite }));
   const au = cell(row, auName(thread.auId));
-  cell(row, thread.blog);
+  au.className = "au-cell";
+  au.title = au.textContent;
+  const blog = cell(row, thread.blog);
+  blog.className = "blog-cell";
+  blog.title = thread.blog;
   const poster = cell(row, "Loading...");
+  poster.className = "reblogger-cell";
   const date = cell(row, "—");
+  date.className = "date-cell";
   const item = { thread, row, au, poster, date, duplicateNotice, lastReblog: null, status: "loading" };
   const actions = cell(row, "");
   const actionGroup = document.createElement("div");
@@ -327,7 +531,10 @@ function updateAuOptions() {
   }
   auInput.value = selectedAu;
   auFilter.value = Array.from(auFilter.options).some((option) => option.value === selectedFilter) ? selectedFilter : "";
-  for (const item of items) item.au.textContent = auName(item.thread.auId);
+  for (const item of items) {
+    item.au.textContent = auName(item.thread.auId);
+    item.au.title = item.au.textContent;
+  }
 }
 
 async function loadAus() {
@@ -500,6 +707,7 @@ function updateTable() {
     (!auFilter.value || (auFilter.value === "unassigned" ? !item.thread.auId : `au:${item.thread.auId}` === auFilter.value)));
   const page = ThreadTable.page(matching, Number(pageSize.value), currentPage);
   currentPage = page.current;
+  lastPage = page.pages;
   const visible = new Set(page.items);
   for (const item of ordered) {
     item.row.hidden = !visible.has(item);
@@ -508,8 +716,8 @@ function updateTable() {
   pageStatus.textContent = page.total
     ? `Page ${page.current} of ${page.pages} · ${page.start + 1}–${page.start + page.items.length} of ${page.total}`
     : "No matching records";
-  previousPage.disabled = page.current === 1;
-  nextPage.disabled = page.current === page.pages;
+  firstPage.disabled = previousPage.disabled = page.current === 1;
+  lastPageButton.disabled = nextPage.disabled = page.current === page.pages;
   if (!page.total) {
     emptyRow = table.insertRow();
     const loading = items.some((item) => item.status === "loading");
@@ -523,31 +731,39 @@ function updateTable() {
 
 async function loadReblog(item) {
   try {
-    const { lastReblog, savedPost } = await request(`${threadPath(item.thread)}/reblog`);
+    const { lastReblog, savedPost, cache } = await request(`${threadPath(item.thread)}/reblog`);
     item.lastReblog = lastReblog;
     item.savedPost = savedPost;
     const latest = lastReblog || savedPost;
     if (!latest) throw new Error("Tumblr returned no saved post details.");
-    item.poster.textContent = latest.blog;
+    const name = document.createElement(latest.url ? "a" : "span");
+    name.className = "reblogger-name";
+    name.textContent = latest.blog;
+    name.title = latest.blog;
     if (latest.url) {
-      const link = document.createElement("a");
-      link.href = latest.url;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = latest.blog;
-      item.poster.replaceChildren(link);
+      name.href = latest.url;
+      name.target = "_blank";
+      name.rel = "noopener noreferrer";
     }
+    item.poster.replaceChildren(name);
     if (!lastReblog) {
       const label = document.createElement("span");
       label.className = "saved-post-label";
       label.textContent = "Saved post (no reblogs)";
       item.poster.append(label);
     }
+    if (cache) {
+      const label = document.createElement("span");
+      label.className = cache.stale ? "cache-info error" : "cache-info";
+      label.textContent = `Checked ${new Date(cache.checkedAt).toLocaleString()}${cache.stale ? ` — ${cache.warning}` : ""}`;
+      item.poster.append(label);
+    }
     const date = new Date(latest.timestamp * 1000);
     item.date.textContent = Number.isNaN(date.getTime()) ? "Unknown date" : date.toLocaleString();
+    item.date.title = item.date.textContent;
   } catch (error) {
     item.poster.textContent = error.message;
-    item.poster.className = "error";
+    item.poster.classList.add("error");
   } finally {
     item.status = "done";
     updateTable();
@@ -560,6 +776,12 @@ async function refresh() {
   message.textContent = "";
   try {
     await loadDefaultBlog();
+    askButton.disabled = false;
+    try {
+      await loadAsks();
+    } catch (error) {
+      if (askDialog.open) askMessage.textContent = error.message;
+    }
     await loadAus();
     const threads = await request("/api/threads");
     table.replaceChildren();
@@ -614,6 +836,33 @@ form.addEventListener("submit", async (event) => {
     await refresh();
   } catch (error) {
     message.textContent = error.message;
+    if (error.duplicate) {
+      const thread = error.duplicate;
+      const match = document.createElement("span");
+      match.className = "duplicate-match";
+      const label = document.createElement("span");
+      label.className = "duplicate-match-label";
+      label.textContent = "Matching thread";
+      const link = document.createElement("a");
+      link.className = "duplicate-match-title";
+      link.href = thread.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = thread.title;
+      const details = [`Blog: ${thread.blog}`, `Post ID: ${thread.postId}`, thread.completed ? "Completed" : "Ongoing"];
+      if (thread.auId) details.push(`AU: ${auName(thread.auId)}`);
+      if (thread.favourite) details.push("Favourite");
+      const badges = document.createElement("span");
+      badges.className = "duplicate-match-details";
+      for (const detail of details) {
+        const badge = document.createElement("span");
+        badge.className = "duplicate-match-badge";
+        badge.textContent = detail;
+        badges.append(badge);
+      }
+      match.append(label, link, badges);
+      message.append(match);
+    }
   } finally {
     submitButton.disabled = !ausLoaded;
     cancelButton.disabled = false;
@@ -625,7 +874,36 @@ form.addEventListener("submit", async (event) => {
 refreshButton.addEventListener("click", refresh);
 cancelButton.addEventListener("click", resetForm);
 referenceType.addEventListener("change", updateReferenceFields);
+form.addEventListener("post-reference-default", (event) => {
+  defaultPostReference = event.detail;
+  if (!editingThread) {
+    referenceType.value = defaultPostReference;
+    updateReferenceFields();
+  }
+});
+extractUrlInput.addEventListener("input", () => {
+  const value = extractUrlInput.value.trim();
+  extractUrlInput.setCustomValidity("");
+  if (!value) {
+    extractUrlHelp.textContent = "Fills the post ID and blog name.";
+    return;
+  }
+  try {
+    const post = PostReference.parsePostUrl(value);
+    blogInput.value = post.blog;
+    idInput.value = post.postId;
+    lastValidPostId = post.postId;
+    document.querySelector("#post-id-help").textContent = "Digits only.";
+    extractUrlHelp.textContent = "Post ID and blog name filled from the link.";
+  } catch (error) {
+    if (!(error instanceof PostReference.ValidationError)) throw error;
+    extractUrlInput.setCustomValidity(error.message);
+    extractUrlHelp.textContent = error.message;
+  }
+});
+blogInput.addEventListener("input", clearExtractUrl);
 idInput.addEventListener("input", () => {
+  clearExtractUrl();
   if (/^[0-9]*$/.test(idInput.value)) {
     lastValidPostId = idInput.value;
     document.querySelector("#post-id-help").textContent = "Digits only.";
@@ -642,8 +920,10 @@ for (const filter of [otherRebloggers, auFilter, partnerFilter, statusFilter, fa
 for (const filter of [titleFilter, rebloggerFilter]) {
   filter.addEventListener("input", () => { currentPage = 1; updateTable(); });
 }
+firstPage.addEventListener("click", () => { currentPage = 1; updateTable(); });
 previousPage.addEventListener("click", () => { currentPage--; updateTable(); });
 nextPage.addEventListener("click", () => { currentPage++; updateTable(); });
+lastPageButton.addEventListener("click", () => { currentPage = lastPage; updateTable(); });
 for (const button of sortButtons) {
   button.addEventListener("click", () => {
     const key = button.dataset.sort;

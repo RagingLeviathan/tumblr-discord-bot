@@ -15,6 +15,7 @@ const express = require("express");
 const axios = require("axios");
 const path = require("path");
 const { createThreadRoutes } = require("./threads/threadRoutes");
+const { createReblogCache } = require("./threads/reblogCache");
 const { SlashCommands } = require("./discord/slashCommands");
 const { createTumblrAuth } = require("./config/tumblrAuth");
 const { getWebConfig } = require("./config/webConfig");
@@ -22,6 +23,7 @@ const webConfig = getWebConfig();
 const CLIENT_ID = process.env.CONSUMER_KEY;
 const CLIENT_SECRET = process.env.CONSUMER_SECRET;
 const tumblrAuth = createTumblrAuth({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET, redirectUri: webConfig.redirectUri, api: axios });
+const reblogCache = createReblogCache();
 const app = express();
 app.use((req, res, next) => {
   if (!webConfig.allowedHosts.includes(req.get("host"))) {
@@ -37,7 +39,7 @@ app.get("/authorize", (req, res, next) => {
   next();
 });
 app.use(tumblrAuth.router);
-app.use("/api/threads", createThreadRoutes({ getAccessToken: tumblrAuth.getToken }));
+app.use("/api/threads", createThreadRoutes({ getAccessToken: tumblrAuth.getToken, getReblog: reblogCache.get }));
 app.use("/threads", express.static(path.join(__dirname, "..", "public", "threads")));
 const client = new Client({
   intents: [
@@ -46,7 +48,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
-const slashCommands = new SlashCommands();
+const slashCommands = new SlashCommands({ getReblog: reblogCache.get });
 client.on("interactionCreate", (interaction) => {
   slashCommands.handle(interaction).catch((error) => {
     console.error("Could not respond to slash command:", error.code || error.name);

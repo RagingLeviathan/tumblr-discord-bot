@@ -126,6 +126,19 @@ test("parses Tumblr URLs and preserves large post IDs", () => {
   }
 });
 
+test("the browser URL helper extracts the exact post ID and publishing blog", () => {
+  const { parsePostUrl: parseBrowserPostUrl } = require("../public/threads/postReference");
+  assert.deepEqual(
+    parseBrowserPostUrl("https://www.tumblr.com/weyvur/833934864209362944/iobartach-said-it-was-my-fault-i-want-to-ask?source=share"),
+    { blog: "weyvur", postId: "833934864209362944", url: "https://www.tumblr.com/weyvur/833934864209362944" }
+  );
+  assert.deepEqual(
+    parseBrowserPostUrl("https://WEYVUR.tumblr.com/post/833934864209362944/title"),
+    { blog: "weyvur", postId: "833934864209362944", url: "https://www.tumblr.com/weyvur/833934864209362944" }
+  );
+  assert.throws(() => parseBrowserPostUrl("https://tumblr.com.evil.example/weyvur/833934864209362944"));
+});
+
 test("stores, reloads, deduplicates and removes threads without losing precision", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-test-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

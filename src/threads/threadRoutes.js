@@ -2,11 +2,12 @@
 
 const express = require("express");
 const axios = require("axios");
-const { createBlogThreadStore, normalizeCollectionBlog, getLastReblog, getTrail, postFromId, validateTitle, verifyPost, ValidationError } = require("./threadTracker");
+const { createBlogThreadStore, normalizeCollectionBlog, getLastReblog, getTrail, parsePostUrl, postFromId, validateTitle, verifyPost, ValidationError, DuplicateThreadError } = require("./threadTracker");
 const { getThreadBlog } = require("../config/blogConfig");
 const { createAuStore } = require("./auStore");
+const { createAskStore } = require("./askStore");
 
-function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadStore({ getBlog }), auStore = createAuStore, api = axios, getApiKey = () => process.env.CONSUMER_KEY, getAccessToken = () => null } = {}) {
+function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadStore({ getBlog }), auStore = createAuStore, askStore = createAskStore, api = axios, getApiKey = () => process.env.CONSUMER_KEY, getAccessToken = () => null, getReblog = getLastReblog } = {}) {
   const router = express.Router();
 
   router.use(express.json({ limit: "16kb" }));
@@ -28,6 +29,7 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
       }
       req.threadStore = store.forBlog ? store.forBlog(req.threadBlog) : store;
       req.auStore = auStore(req.threadBlog);
+      req.askStore = askStore(req.threadBlog);
       next();
     } catch (error) {
       console.error("Could not open thread collection:", error.message);
@@ -50,6 +52,36 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
     } catch (error) {
       console.error("Could not read AUs:", error.message);
       res.status(500).json({ error: "Could not read AUs. Check the server log." });
+    }
+  });
+
+  router.get("/asks", (req, res) => {
+    try {
+      res.json(req.askStore.list());
+    } catch (error) {
+      console.error("Could not read saved asks:", error.message);
+      res.status(500).json({ error: "Could not read saved asks. Check the server log." });
+    }
+  });
+
+  router.post("/asks", (req, res) => {
+    try {
+      const { url, note } = req.body || {};
+      res.status(201).json(req.askStore.add(url, note));
+    } catch (error) {
+      if (error instanceof ValidationError) return res.status(400).json({ error: error.message });
+      console.error("Could not save ask:", error.message);
+      res.status(500).json({ error: "Could not save ask. Check the server log." });
+    }
+  });
+
+  router.delete("/asks/:id", (req, res) => {
+    try {
+      if (!req.askStore.remove(req.params.id)) return res.status(404).json({ error: "Saved ask not found." });
+      res.status(204).end();
+    } catch (error) {
+      console.error("Could not remove saved ask:", error.message);
+      res.status(500).json({ error: "Could not remove saved ask. Check the server log." });
     }
   });
 
@@ -89,15 +121,21 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
       ) : null;
       if (isEdit && !existing) return res.status(404).json({ error: "Tracked thread not found." });
       validateTitle(title);
-      let newUrl = url;
+      if (postId !== undefined && url !== undefined) throw new ValidationError("Provide either a URL or a post ID, not both.");
+      const reference = postId !== undefined
+        ? postFromId(blog === undefined ? req.threadBlog : blog, postId)
+        : parsePostUrl(url);
+      const duplicate = req.threadStore.list().find((item) =>
+        item.blog === reference.blog && item.postId === reference.postId &&
+        (!existing || item.blog !== existing.blog || item.postId !== existing.postId)
+      );
+      if (duplicate) throw new DuplicateThreadError(duplicate);
       if (postId !== undefined) {
-        if (url !== undefined) throw new ValidationError("Provide either a URL or a post ID, not both.");
-        const thread = postFromId(blog === undefined ? req.threadBlog : blog, postId);
-        if (!existing || existing.blog !== thread.blog || existing.postId !== thread.postId) {
+        if (!existing || existing.blog !== reference.blog || existing.postId !== reference.postId) {
           const apiKey = getApiKey();
           if (!apiKey) return res.status(503).json({ error: "Set CONSUMER_KEY in .env to verify Tumblr posts." });
           try {
-            await verifyPost(thread, apiKey, api);
+            await verifyPost(reference, apiKey, api);
           } catch (error) {
             if (error instanceof ValidationError) throw error;
             if (error.response && error.response.status === 404) {
@@ -111,7 +149,6 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
             return res.status(502).json({ error: "Could not verify the post with Tumblr. Check the server log." });
           }
         }
-        newUrl = thread.url;
       }
       if (normalizeCollectionBlog(getBlog()) !== req.threadBlog) {
         return res.status(409).json({ error: "The configured blog changed. Refresh the thread list before continuing." });
@@ -121,11 +158,12 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
         throw new ValidationError("Choose an existing AU or leave it unassigned.");
       }
       const result = isEdit
-        ? req.threadStore.update(req.params.blog, req.params.postId, title, newUrl, auId, completed)
-        : req.threadStore.add(title, newUrl, auId);
+        ? req.threadStore.update(req.params.blog, req.params.postId, title, reference.url, auId, completed)
+        : req.threadStore.add(title, reference.url, auId);
       if (!result) return res.status(404).json({ error: "Tracked thread not found." });
       res.status(isEdit ? 200 : 201).json(result);
     } catch (error) {
+      if (error instanceof DuplicateThreadError) return res.status(400).json({ error: error.message, duplicate: error.thread });
       if (error instanceof ValidationError) return res.status(400).json({ error: error.message });
       console.error("Could not save tracked thread:", error.message);
       res.status(500).json({ error: "Could not save tracked thread. Check the server log." });
@@ -165,7 +203,7 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
         item.blog === req.params.blog && item.postId === req.params.postId
       );
       if (!thread) return res.status(404).json({ error: "Tracked thread not found." });
-      res.json(await getLastReblog(thread, getApiKey(), api));
+      res.json(await getReblog(thread, getApiKey(), api));
     } catch (error) {
       console.error("Could not fetch thread reblogs:", error.message);
       if (error.response) {

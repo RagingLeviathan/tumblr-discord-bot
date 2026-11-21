@@ -9,6 +9,54 @@ const express = require("express");
 const { createThreadStore, createBlogThreadStore } = require("../src/threads/threadTracker");
 const { createThreadRoutes } = require("../src/threads/threadRoutes");
 const { createAuStore } = require("../src/threads/auStore");
+const { createAskStore } = require("../src/threads/askStore");
+
+test("saves and removes manual asks per blog without Tumblr requests", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-asks-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let blog = "first";
+  const app = express();
+  app.use("/api/threads", createThreadRoutes({
+    getBlog: () => blog,
+    store: createBlogThreadStore({ directory: dir, getBlog: () => blog }),
+    auStore: (name) => createAuStore(name, dir),
+    askStore: (name) => createAskStore(name, dir),
+    api: { get: () => { throw new Error("Unexpected Tumblr request"); } },
+  }));
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}/api/threads/asks`;
+  const send = (method, suffix = "", body, header = blog) => fetch(`${base}${suffix}`, {
+    method, headers: { "Content-Type": "application/json", "X-Thread-Blog": header },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  assert.deepEqual(await (await send("GET")).json(), []);
+  const response = await send("POST", "", { url: "https://www.tumblr.com/Example/832760197646860288/title?source=share", note: "  An idea  " });
+  assert.equal(response.status, 201);
+  const ask = await response.json();
+  assert.equal(ask.url, "https://www.tumblr.com/example/832760197646860288");
+  assert.equal(ask.note, "An idea");
+  assert.equal((await send("POST", "", { url: "https://example.tumblr.com/post/832760197646860288" })).status, 400);
+  for (const data of [
+    { url: "https://not-tumblr.com/example/123" },
+    { url: "javascript:alert(1)" },
+    { url: "https://www.tumblr.com/example/123", note: "x".repeat(501) },
+  ]) assert.equal((await send("POST", "", data)).status, 400);
+  assert.deepEqual(await (await send("GET")).json(), [ask]);
+  blog = "second";
+  assert.equal((await send("DELETE", `/${ask.id}`, undefined, "first")).status, 409);
+  assert.deepEqual(await (await send("GET")).json(), []);
+  blog = "first";
+  assert.equal((await send("DELETE", "/missing")).status, 404);
+  assert.equal((await send("DELETE", `/${ask.id}`)).status, 204);
+  assert.deepEqual(await (await send("GET")).json(), []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "asks_first.json"), "utf8")), []);
+  fs.writeFileSync(path.join(dir, "asks_first.json"), JSON.stringify([{ id: "x", url: "javascript:alert(1)", note: "" }]));
+  assert.equal((await send("GET")).status, 500);
+  assert.equal((await send("POST", "", { url: "https://www.tumblr.com/example/123" })).status, 500);
+});
 
 test("updates thread flags and rejects invalid or stale changes", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-status-route-"));
@@ -170,6 +218,75 @@ test("switches collections live and rejects stale or in-flight writes", async (t
   assert.equal((await (await fetch(base)).json())[0].title, "Second");
 });
 
+test("duplicate ID edits return the matching record without calling Tumblr", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-duplicate-test-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "threads.json");
+  fs.writeFileSync(file, "[]");
+  const store = createThreadStore(file);
+  store.add("First", "https://www.tumblr.com/root/1");
+  store.add("Matching thread", "https://www.tumblr.com/root/2");
+  store.setFlags("root", "2", { completed: true, favourite: true });
+  let calls = 0;
+  const app = express();
+  app.use("/api/threads", createThreadRoutes({
+    store, getApiKey: () => "key", api: { get: async () => { calls++; throw new Error("Unexpected request"); } },
+  }));
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const result = await fetch(`http://127.0.0.1:${server.address().port}/api/threads/root/1`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: "Edited", blog: "ROOT", postId: "2" }),
+  });
+  assert.equal(result.status, 400);
+  const body = await result.json();
+  assert.equal(body.error, "This post is already tracked.");
+  assert.equal(body.duplicate.title, "Matching thread");
+  assert.equal(body.duplicate.completed, true);
+  assert.equal(body.duplicate.favourite, true);
+  assert.equal(calls, 0);
+  assert.equal(store.list()[0].title, "First");
+});
+
+test("concurrent ID additions report the record saved by the other request", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-duplicate-race-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "threads.json");
+  fs.writeFileSync(file, "[]");
+  const store = createThreadStore(file);
+  let release;
+  const waiting = new Promise((resolve) => { release = resolve; });
+  let bothStarted;
+  const started = new Promise((resolve) => { bothStarted = resolve; });
+  let requests = 0;
+  const api = { get: async () => {
+    if (++requests === 2) bothStarted();
+    await waiting;
+    return { data: { response: { posts: [{ id_string: "1", blog_name: "root" }] } } };
+  } };
+  const app = express();
+  app.use("/api/threads", createThreadRoutes({ store, api, getApiKey: () => "key" }));
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const url = `http://127.0.0.1:${server.address().port}/api/threads`;
+  const add = (title) => fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, blog: "root", postId: "1" }),
+  });
+  const responses = Promise.all([add("First request"), add("Second request")]);
+  await started;
+  release();
+  const results = await responses;
+  assert.deepEqual(results.map((result) => result.status).sort(), [201, 400]);
+  const duplicate = await results.find((result) => result.status === 400).json();
+  assert.equal(duplicate.duplicate.title, store.list()[0].title);
+  assert.equal(store.list().length, 1);
+});
+
 test("thread endpoints persist entries and report per-thread Tumblr errors", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-route-test-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -229,7 +346,14 @@ test("thread endpoints persist entries and report per-thread Tumblr errors", asy
     assert.equal((await response.json()).url, "https://www.tumblr.com/default-blog/789524026478493696");
     assert.equal((await add({ title: "Override", blog: "other", postId: "789524026478493697" })).status, 201);
     assert.equal(requests.at(-1).url, "https://api.tumblr.com/v2/blog/other.tumblr.com/posts");
-    assert.equal((await add({ title: "Duplicate", postId: "789524026478493696" })).status, 400);
+    const callsBeforeDuplicate = requests.length;
+    const duplicate = await add({ title: "Duplicate", postId: "789524026478493696" });
+    assert.equal(duplicate.status, 400);
+    assert.deepEqual((await duplicate.json()).duplicate, {
+      title: "Default", blog: "default-blog", postId: "789524026478493696",
+      url: "https://www.tumblr.com/default-blog/789524026478493696",
+    });
+    assert.equal(requests.length, callsBeforeDuplicate);
     const saved = JSON.parse(fs.readFileSync(file));
     assert.equal(saved.length, 2);
     assert.equal(saved[1].url, "https://www.tumblr.com/other/789524026478493697");
@@ -241,7 +365,12 @@ test("thread endpoints persist entries and report per-thread Tumblr errors", asy
   const response = await add({ title: "My thread", url: "https://www.tumblr.com/blog/833900598515695616/example" });
   assert.equal(response.status, 201);
   assert.equal((await response.json()).postId, "833900598515695616");
-  assert.equal((await add({ title: "duplicate", url: "https://blog.tumblr.com/post/833900598515695616" })).status, 400);
+  const duplicate = await add({ title: "duplicate", url: "https://blog.tumblr.com/post/833900598515695616" });
+  assert.equal(duplicate.status, 400);
+  assert.deepEqual((await duplicate.json()).duplicate, {
+    title: "My thread", blog: "blog", postId: "833900598515695616",
+    url: "https://www.tumblr.com/blog/833900598515695616",
+  });
   assert.equal((await (await fetch(base)).json()).length, 1);
   const url = `${base}/blog/833900598515695616`;
   const edit = (endpoint, data) => fetch(endpoint, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
@@ -251,7 +380,9 @@ test("thread endpoints persist entries and report per-thread Tumblr errors", asy
   assert.equal(renamed.status, 200);
   assert.equal((await renamed.json()).title, "Renamed");
   assert.equal((await add({ title: "Other", url: "https://www.tumblr.com/other/123" })).status, 201);
-  assert.equal((await edit(url, { title: "Duplicate", url: "https://www.tumblr.com/other/123" })).status, 400);
+  const duplicateEdit = await edit(url, { title: "Duplicate", url: "https://www.tumblr.com/other/123" });
+  assert.equal(duplicateEdit.status, 400);
+  assert.equal((await duplicateEdit.json()).duplicate.title, "Other");
   assert.equal((await (await fetch(base)).json())[0].title, "Renamed");
   assert.equal((await edit(url, { title: "ID rename", blog: "blog", postId: "833900598515695616" })).status, 200);
   const unverifiable = await edit(url, { title: "Changed", blog: "blog", postId: "123" });
