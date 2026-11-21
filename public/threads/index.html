@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tracked Tumblr threads</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="tableState.js" defer></script>
+  <script src="threads.js" defer></script>
+</head>
+<body>
+  <header><span class="brand">TUMBLR THREAD TRACKER</span></header>
+  <main>
+    <div class="heading">
+      <div class="heading-copy">
+        <p class="eyebrow">YOUR THREADS</p>
+        <h1>Tracked threads</h1>
+        <p>See who most recently reblogged each saved post.</p>
+      </div>
+      <img class="heading-art" src="nueva-york-hive-runner-header.png" alt="">
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+    <div class="add-form">
+      <form id="add-thread" class="thread-fields">
+        <label>Writing with<input name="partner" maxlength="200" required placeholder="e.g. thera"></label>
+        <label>Story name (optional)<input name="story" maxlength="200" autocomplete="off" placeholder="Defaults to n/a"></label>
+        <label>AU<select name="auId"><option value="">No AU</option></select></label>
+        <label>Post reference
+          <select name="referenceType">
+            <option value="id" selected>Post ID</option>
+            <option value="url">Post URL</option>
+          </select>
+        </label>
+        <label id="url-field" hidden>Tumblr post URL<input name="url" type="url" disabled placeholder="https://www.tumblr.com/blog/post-id"></label>
+        <label id="blog-field">Blog name<input name="blog" required placeholder="e.g. iobartach"></label>
+        <label id="id-field">Post ID<input name="postId" type="text" inputmode="numeric" pattern="[0-9]+" required aria-describedby="post-id-help" placeholder="e.g. 789524026478493696"><span id="post-id-help">Digits only.</span></label>
+      </form>
+      <div class="form-actions">
+        <button id="track-thread" type="submit" form="add-thread">Track thread</button>
+        <label id="edit-completed-field" class="filter-toggle" hidden><input name="completed" form="add-thread" type="checkbox"> Mark as completed</label>
+        <section class="filters" aria-label="Reblogger filter">
+          <label class="filter-toggle"><input id="other-rebloggers" type="checkbox" disabled> Show only threads last reblogged by another blog</label>
+          <p class="hint" id="filter-help">Loading configured blog...</p>
+        </section>
+        <label class="filter-toggle favourites-first"><input id="favourites-first" type="checkbox"> Show starred threads first</label>
+        <button id="manage-aus" type="button" class="secondary">Manage AUs</button>
+        <button id="cancel-edit" type="button" class="secondary" hidden>Cancel edit</button>
+      </div>
+    </div>
+    <p class="hint">Titles are formatted as <strong>w/ partner | story name</strong>.</p>
+    <p class="hint">For a post ID, use the blog that published that specific post. Tumblr checks access before it is saved.</p>
+    <p id="message" role="status" aria-live="polite"></p>
+    <div class="table-controls">
+      <label>Filter by thread title<input id="title-filter" type="search" placeholder="Search titles"></label>
+      <label>Filter by writing partner<select id="partner-filter"><option value="">All writing partners</option></select></label>
+      <label>Filter by last reblogger<input id="reblogger-filter" type="search" placeholder="Search blog names"></label>
+      <label>Filter by AU<select id="au-filter"><option value="">All AUs</option><option value="unassigned">No AU</option></select></label>
+      <label>Filter by status<select id="status-filter"><option value="all">All threads</option><option value="ongoing">Ongoing</option><option value="completed">Completed</option><option value="favourites">Favourites</option></select></label>
+      <label>Records per page<select id="page-size"><option>10</option><option>25</option><option>50</option><option>100</option></select></label>
+    </div>
+    <p class="hint">Tick a thread when completed; select its star to mark it as a favourite. Threads sharing a writing partner are highlighted.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col" aria-sort="none"><button class="sort" type="button" data-sort="title">Thread title <span aria-hidden="true"></span></button></th><th scope="col">AU</th><th scope="col" aria-sort="none"><button class="sort" type="button" data-sort="blog">Root blog <span aria-hidden="true"></span></button></th><th scope="col" aria-sort="none"><button class="sort" type="button" data-sort="reblogger">Last reblogger <span aria-hidden="true"></span></button></th><th scope="col" aria-sort="none"><button class="sort" type="button" data-sort="date">Last reblog date <span aria-hidden="true"></span></button></th><th scope="col" class="actions-heading">Actions</th></tr></thead>
+        <tbody id="threads"></tbody>
+      </table>
+    </div>
+    <nav class="pagination" aria-label="Thread pages">
+      <button id="previous-page" type="button" class="secondary">Previous</button>
+      <span id="page-status" aria-live="polite"></span>
+      <button id="next-page" type="button" class="secondary">Next</button>
+    </nav>
+    <p class="hint">The latest reblog can be from any branch, not necessarily your roleplay partner.</p>
+    <dialog id="au-dialog" aria-labelledby="au-title">
+      <h2 id="au-title">Manage AUs</h2>
+      <form id="au-form" class="au-form">
+        <label>AU name<input name="name" maxlength="100" required></label>
+        <label>Short name (optional)<input name="shortName" maxlength="50"></label>
+        <label>Verse info link (optional)<input name="verseUrl" type="url" maxlength="2048" placeholder="https://..."></label>
+        <div class="au-form-actions">
+          <button type="submit">Add AU</button>
+          <button id="au-cancel-edit" type="button" class="secondary" hidden>Cancel edit</button>
+        </div>
+      </form>
+      <p id="au-message" role="status" aria-live="polite"></p>
+      <ul id="au-list" class="au-list"></ul>
+      <button id="au-close" type="button" class="secondary">Close</button>
+    </dialog>
+    <dialog id="trail-dialog" aria-labelledby="trail-title">
+      <h2 id="trail-title">Reblog trail</h2>
+      <p class="hint">Earlier posts, oldest first. Trails can be missing or incomplete.</p>
+      <p><a id="trail-open" target="_blank" rel="noopener noreferrer">Open saved post on Tumblr</a> (log in on Tumblr to inspect it).</p>
+      <div class="trail-actions">
+        <button id="trail-public" type="button">Find public trail</button>
+        <button id="trail-authenticated" type="button" class="secondary">Try authenticated lookup</button>
+        <a href="/authorize" target="_blank" rel="noopener noreferrer">Authorize Tumblr</a>
+        <button id="trail-close" type="button" class="secondary">Close</button>
+      </div>
+      <p id="trail-status" role="status" aria-live="polite"></p>
+      <ol id="trail-results"></ol>
+    </dialog>
+  </main>
+  <footer>&copy; <span id="copyright-year"></span> Developed by Raging Leviathan</footer>
+</body>
+</html>

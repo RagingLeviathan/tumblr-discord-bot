@@ -1,12 +1,14 @@
 const fs = require("fs");
+const path = require("path");
+const { legacy } = require("../src/config/dataPaths");
 
-const latestFile = process.argv[2] || "followers02-11-2026 21.json";
-const previousFile = process.argv[3] || "followers22-09-2026 15.json";
-const outputFile = process.argv[4] || "followers_diff.json";
+const latestFile = process.argv[2] || path.join(legacy, "followers02-11-2026 21.json");
+const previousFile = process.argv[3] || path.join(legacy, "followers22-09-2026 15.json");
+const outputFile = process.argv[4] || path.join(legacy, "followers_diff.json");
 
 if (!fs.existsSync(latestFile) || !fs.existsSync(previousFile)) {
   console.error(
-    "Usage: node missingNames.js <latestFile.json> <previousFile.json> [outputFile.json]",
+    "Usage: node scripts/missingNames.js <latestFile.json> <previousFile.json> [outputFile.json]",
   );
   process.exit(1);
 }
@@ -76,5 +78,6 @@ if (missingFromLatest.length === 0) {
   missingFromLatestUrls.forEach((url) => console.log(url));
 }
 
+if (!process.argv[4]) fs.mkdirSync(legacy, { recursive: true, mode: 0o700 });
 fs.writeFileSync(outputFile, JSON.stringify(diffReport, null, 2));
 console.log(`\nSaved diff report to ${outputFile}`);

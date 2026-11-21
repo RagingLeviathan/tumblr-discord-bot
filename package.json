@@ -4,14 +4,17 @@
   "description": "Node.js app to consume tumblr api and check shit",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js",
+    "test": "node --test",
+    "register-commands": "node scripts/registerSlashCommands.js",
+    "create-shortcuts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/createDataShortcuts.ps1"
   },
   "author": "Nix",
   "license": "ISC",
   "dependencies": {
     "axios": "^1.6.8",
     "crypto": "^1.0.1",
-    "discord.js": "^14.14.1",
+    "discord.js": "^14.28.1",
     "dotenv": "^16.4.5",
     "express": "^4.19.1",
     "fs": "^0.0.1-security",

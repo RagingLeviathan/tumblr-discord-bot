@@ -9,3 +9,14 @@ package-lock.json
 followers*
 index-*
 archive
+/follower-snapshots/
+/slash-audit/
+/data/*
+!/data/legacy/
+/data/legacy/*
+!/data/legacy/missing_names.json
+!/data/legacy/new_followers.json
+/Thread data.lnk
+/Follower snapshots.lnk
+/Slash audit.lnk
+/Legacy follower data.lnk
