@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "test": "node --test",
+    "backup": "node scripts/backupData.js",
     "register-commands": "node scripts/registerSlashCommands.js",
     "create-shortcuts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/createDataShortcuts.ps1"
   },

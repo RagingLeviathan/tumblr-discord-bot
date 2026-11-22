@@ -41,6 +41,76 @@
 
 Leveraging the Tumblr API through a Discord bot.
 
+## Tumblr and Discord capabilities
+
+### Tumblr and the local tracker
+
+- Track posts by URL or post ID, and see the latest reblogger and reblog date.
+  The latest reblog can be from any branch, not necessarily your writing partner.
+- Organize threads by writing partner and AU; mark them completed or favourite,
+  filter and sort them, or open a random matching thread.
+- Look up a post's available reblog trail using public or authenticated Tumblr
+  access, and search Google for a post ID.
+- Save ask links and notes manually for later. This does not read or change
+  your Tumblr inbox.
+- Fetch follower snapshots and compare them over time. Tumblr credentials and
+  appropriate blog access are required.
+
+See [Tracked threads](#tracked-threads) for setup, caching and API limitations.
+
+### Discord
+
+- `/thread add`, `/thread list`, `/thread latest` and `/thread remove` manage
+  and check the same thread collection used by the local tracker.
+- `/blog recent` lists up to five recent public posts.
+- `/followers snapshot` saves a follower snapshot; `/followers compare`
+  compares the latest two and returns a JSON attachment.
+- The legacy `$tumblrcracker` command fetches a follower list, `$authorizetumblr`
+  supplies the local authorization link, and `$owl` checks that the bot responds.
+
+The slash commands are restricted to the configured owner, but their results
+are visible in the Discord channel. The older `$` commands are not covered by
+that restriction. See [Discord slash commands](#discord-slash-commands) and
+[Follower command](#follower-command) for setup and privacy details. The web
+tracker is local-only and is not a multi-user service.
+
+## Prerequisites
+
+- **Node.js and npm:** Install [Node.js](https://nodejs.org/) 18.17 or newer;
+  a currently supported LTS release is recommended. npm is included with
+  Node.js. Check them with `node --version` and `npm --version`, then run
+  `npm install` in the project directory. If PowerShell blocks `npm.ps1` on
+  Windows, use `npm.cmd` instead (for example, `npm.cmd install`).
+- **Browser and network:** Use a modern browser with JavaScript enabled on the
+  machine running the bot. Tumblr authorization needs cookies, and saving
+  appearance settings needs browser storage. The bot needs internet access to
+  Discord and Tumblr, and its local port (3000 by default) must be available.
+- **Storage:** The project directory must be writable so the app can create
+  and update its local `data/` files. Keep those files private and backed up.
+- **Optional backups:** Install [Git](https://git-scm.com/) and use a separate
+  private GitHub repository with appropriate credentials. See
+  [Private GitHub data backups on Windows](#private-github-data-backups-on-windows).
+- **Tumblr application:** Register an app at
+  [Tumblr's application page](https://www.tumblr.com/oauth/apps). Put its
+  OAuth consumer key (client ID) in `CONSUMER_KEY` and its consumer secret
+  (client secret) in `CONSUMER_SECRET` in `.env`. For Tumblr authorization,
+  register `http://localhost:3000/callback` as the callback URL, adjusting the
+  port if you set `PORT`. Follower snapshots also require OAuth 1.0a user
+  credentials `OAUTH_KEY` and `OAUTH_SECRET` authorized for the blog.
+- **Discord bot and server:** Create an application and bot in the
+  [Discord Developer Portal](https://discord.com/developers/applications),
+  then install it in a server where you have permission to add apps. Include
+  the `bot` and `applications.commands` scopes and grant the bot appropriate
+  channel permissions, including permission to send messages and attachments.
+  Put the application ID in `DISCORD_CLIENT_ID`, the **bot token** in
+  `DISCORD_CLIENT_SECRET` (despite its name), and your Discord user ID in
+  `DISCORD_OWNER_ID`. Enable the Message Content intent for the legacy `$`
+  commands. See [Discord slash commands](#discord-slash-commands) to register
+  the slash commands.
+
+Copy `.env-example` to `.env` as a starting point and add any missing variables.
+Keep `.env`, bot tokens and Tumblr secrets private; do not commit or share them.
+
 ## Local-only, single-user access
 
 The web server listens on `127.0.0.1:3000` by default, on this computer only. Open
@@ -190,6 +260,16 @@ Replace the example paths and repository URL with your own:
    Check the output, inspect the private repository on GitHub, and test a
    restore before relying on it.
 
+You can also run the backup from the bot project directory using the npm
+shortcut, passing your own checkout path and private repository URL:
+
+```powershell
+npm.cmd run backup -- "C:\Users\YOURNAME\tumblr-discord-bot-DATA" "https://github.com/YOURNAME/tumblr-discord-bot-DATA.git"
+```
+
+Add `--force` after the URL to run another backup on the same day. The path and
+URL are arguments, not stored in `package.json`.
+
 To run another manual backup on the same day, add `--force`:
 
 ```powershell
@@ -299,7 +379,8 @@ posts, rate limits, and other API errors are shown separately.
    If a post is already tracked, the message identifies the matching thread
    and links to the post without clearing the form.
 
-Use **Open random thread** to open a matching saved post in a new tab. It
+Use **Open random thread** to open a matching thread's latest reblog in a new
+tab. If the reblog link is unavailable, it opens the saved post instead. It
 respects the current filters and chooses from all matching pages, not just the
 page on screen. The button is unavailable while threads are loading or when
 nothing matches.
@@ -508,3 +589,9 @@ without duplicate warnings are best-effort. Missing names
 in a comparison may reflect a rename or deactivation, not necessarily an
 unfollow. Very large or rate-limited snapshots can fail without saving partial
 data. Scheduled notifications are not included.
+
+## Future improvements
+
+- Investigate and test using the Discord bot in a private one-to-one direct
+  message, including command availability, permissions and privacy. DM support
+  has not yet been verified.

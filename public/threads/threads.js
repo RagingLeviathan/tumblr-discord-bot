@@ -882,7 +882,10 @@ form.addEventListener("submit", async (event) => {
 refreshButton.addEventListener("click", refresh);
 randomThreadButton.addEventListener("click", () => {
   const item = ThreadTable.random(matchingItems);
-  if (item) item.row.querySelector(".thread-title-link").click();
+  if (item) {
+    const link = item.poster.querySelector("a.reblogger-name") || item.row.querySelector(".thread-title-link");
+    link.click();
+  }
 });
 cancelButton.addEventListener("click", resetForm);
 referenceType.addEventListener("change", updateReferenceFields);
