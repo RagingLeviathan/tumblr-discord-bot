@@ -18,6 +18,11 @@ test("migrates older settings and retains the chosen post reference", () => {
   assert.throws(() => settings.parse(JSON.stringify({ ...olderSettings, postReference: null })));
 });
 
+test("supports saving five records per page", () => {
+  const saved = { ...settings.defaults, pageSize: "5" };
+  assert.deepEqual(settings.parse(JSON.stringify(saved)), saved);
+});
+
 test("rejects corrupt settings and unsupported or oversized images", () => {
   assert.throws(() => settings.parse("{"));
   for (const change of [

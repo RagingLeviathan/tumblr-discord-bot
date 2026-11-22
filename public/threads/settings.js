@@ -17,7 +17,7 @@ const TrackerSettings = (() => {
         !["blue", "teal", "purple", "rose"].includes(value.accent) ||
         !["normal", "large", "larger"].includes(value.textSize) ||
         !["comfortable", "compact", "spacious"].includes(value.density) ||
-        !["10", "25", "50", "100"].includes(value.pageSize) ||
+        !["5", "10", "25", "50", "100"].includes(value.pageSize) ||
         !["id", "url"].includes(postReference) ||
         !(value.image === null || (typeof value.image === "string" &&
           value.image.length <= Math.ceil(maxImageBytes * 4 / 3) + 64 &&

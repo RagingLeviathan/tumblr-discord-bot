@@ -440,7 +440,7 @@ without the `w/ partner | story name` format are preserved but do not appear
 in the partner filter. Stop old bot processes before starting this version so
 they cannot overwrite the new numbers.
 
-Choose 10, 25, 50, or 100 records per page and use **First**, **Previous**,
+Choose 5, 10, 25, 50, or 100 records per page and use **First**, **Previous**,
 **Next**, and **Last** to navigate the filtered, sorted results. Reblog details
 for all pages are loaded so sorting and filtering can use them.
 

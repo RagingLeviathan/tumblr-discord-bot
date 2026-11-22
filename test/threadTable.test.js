@@ -53,6 +53,8 @@ test("combines case-insensitive partial title and displayed reblogger searches",
 
 test("paginates filtered results and clamps a page after removals", () => {
   const entries = Array.from({ length: 26 }, (_, index) => index);
+  assert.deepEqual(page(entries, 5, 2).items, entries.slice(5, 10));
+  assert.deepEqual(page(entries, 5, 6).items, [25]);
   assert.deepEqual(page(entries, 10, 2).items, entries.slice(10, 20));
   assert.deepEqual(page(entries, 25, 2).items, [25]);
   assert.equal(page(entries, 50, 2).current, 1);
