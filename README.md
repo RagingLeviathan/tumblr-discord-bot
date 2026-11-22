@@ -299,6 +299,11 @@ posts, rate limits, and other API errors are shown separately.
    If a post is already tracked, the message identifies the matching thread
    and links to the post without clearing the form.
 
+Use **Open random thread** to open a matching saved post in a new tab. It
+respects the current filters and chooses from all matching pages, not just the
+page on screen. The button is unavailable while threads are loading or when
+nothing matches.
+
 Use **Saved asks** to manually save Tumblr ask links with an optional note. The
 button counts the links remaining in the list, not the contents of your Tumblr
 inbox. The list shows five asks per page. Open a link while logged in to Tumblr;

@@ -4,6 +4,7 @@ const table = document.querySelector("#threads");
 const form = document.querySelector("#add-thread");
 const message = document.querySelector("#message");
 const refreshButton = document.querySelector("#refresh");
+const randomThreadButton = document.querySelector("#random-thread");
 const referenceType = form.elements.referenceType;
 const blogInput = form.elements.blog;
 const idInput = form.elements.postId;
@@ -66,6 +67,8 @@ let trailThread = null;
 let trailRequest = 0;
 let defaultBlog = null;
 let items = [];
+let matchingItems = [];
+let loadingThreads = true;
 let aus = [];
 let ausLoaded = false;
 let editingAu = null;
@@ -701,11 +704,12 @@ function updateTable() {
     emptyRow = null;
   }
   const ordered = ThreadTable.order(items, sortKey, sortDirection, favouritesFirst.checked);
-  const matching = ordered.filter((item) => ThreadTable.matches(item, otherRebloggers.checked, defaultBlog, titleFilter.value, rebloggerFilter.value) &&
+  matchingItems = ordered.filter((item) => ThreadTable.matches(item, otherRebloggers.checked, defaultBlog, titleFilter.value, rebloggerFilter.value) &&
     ThreadTable.matchesStatus(item, statusFilter.value) &&
     (!partnerFilter.value || item.thread.partner?.toLowerCase() === partnerFilter.value) &&
     (!auFilter.value || (auFilter.value === "unassigned" ? !item.thread.auId : `au:${item.thread.auId}` === auFilter.value)));
-  const page = ThreadTable.page(matching, Number(pageSize.value), currentPage);
+  randomThreadButton.disabled = loadingThreads || !matchingItems.length;
+  const page = ThreadTable.page(matchingItems, Number(pageSize.value), currentPage);
   currentPage = page.current;
   lastPage = page.pages;
   const visible = new Set(page.items);
@@ -771,6 +775,8 @@ async function loadReblog(item) {
 }
 
 async function refresh() {
+  loadingThreads = true;
+  randomThreadButton.disabled = true;
   refreshButton.disabled = true;
   submitButton.disabled = true;
   message.textContent = "";
@@ -797,6 +803,8 @@ async function refresh() {
   } catch (error) {
     message.textContent = error.message;
   } finally {
+    loadingThreads = false;
+    randomThreadButton.disabled = !matchingItems.length;
     refreshButton.disabled = false;
     submitButton.disabled = !ausLoaded;
     table.querySelectorAll(".status-toggle").forEach((control) => { control.disabled = false; });
@@ -872,6 +880,10 @@ form.addEventListener("submit", async (event) => {
 });
 
 refreshButton.addEventListener("click", refresh);
+randomThreadButton.addEventListener("click", () => {
+  const item = ThreadTable.random(matchingItems);
+  if (item) item.row.querySelector(".thread-title-link").click();
+});
 cancelButton.addEventListener("click", resetForm);
 referenceType.addEventListener("change", updateReferenceFields);
 form.addEventListener("post-reference-default", (event) => {

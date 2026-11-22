@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { order, matches, matchesStatus, page } = require("../public/threads/tableState");
+const { order, matches, matchesStatus, page, random } = require("../public/threads/tableState");
 
 const items = [
   { thread: { title: "zulu", blog: "alpha" }, lastReblog: { blog: "Other", timestamp: 100 } },
@@ -58,6 +58,17 @@ test("paginates filtered results and clamps a page after removals", () => {
   assert.equal(page(entries, 50, 2).current, 1);
   assert.equal(page(entries, 100, 1).items.length, 26);
   assert.deepEqual(page([], 10, 3), { items: [], current: 1, pages: 1, total: 0, start: 0 });
+});
+
+test("chooses randomly from all matching results, including other pages", () => {
+  const entries = Array.from({ length: 26 }, (_, index) => ({
+    thread: { title: `Thread ${index}`, completed: index % 2 === 0 },
+  }));
+  const matching = entries.filter((item) => matchesStatus(item, "completed"));
+  assert.equal(page(matching, 10, 1).items.length, 10);
+  assert.equal(random(matching, () => 0), entries[0]);
+  assert.equal(random(matching, () => 0.999), entries[24]);
+  assert.equal(random([], () => 0), null);
 });
 
 test("paginates 25 saved asks in groups of five and clamps after removal", () => {

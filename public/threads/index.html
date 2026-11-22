@@ -66,6 +66,10 @@
       <label>Filter by status<select id="status-filter"><option value="all">All threads</option><option value="ongoing">Ongoing</option><option value="completed">Completed</option><option value="favourites">Favourites</option></select></label>
       <label>Records per page<select id="page-size"><option>10</option><option>25</option><option>50</option><option>100</option></select></label>
     </div>
+    <div class="random-thread-actions">
+      <button id="random-thread" type="button" class="secondary" disabled aria-describedby="random-thread-help">Open random thread</button>
+      <span id="random-thread-help" class="hint">Chooses from all matching threads, including other pages, and opens the saved post in a new tab.</span>
+    </div>
     <p class="hint">Tick a thread when completed; select its star to mark it as a favourite. <span id="partner-highlight-hint">Threads sharing a writing partner are highlighted.</span></p>
     <div class="table-wrap">
       <table>

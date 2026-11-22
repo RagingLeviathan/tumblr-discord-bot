@@ -39,6 +39,9 @@ const ThreadTable = {
       (!title || item.thread.title.toLowerCase().includes(title)) &&
       (!reblogger || Boolean(latest && latest.blog.toLowerCase().includes(reblogger)));
   },
+  random(items, random = Math.random) {
+    return items.length ? items[Math.floor(random() * items.length)] : null;
+  },
   page(items, size, requestedPage) {
     const pages = Math.max(1, Math.ceil(items.length / size));
     const current = Math.min(Math.max(1, requestedPage), pages);
