@@ -2,14 +2,30 @@ const fs = require("fs");
 const path = require("path");
 const { legacy } = require("../src/config/dataPaths");
 
-const latestFile = process.argv[2] || path.join(legacy, "followers02-11-2026 21.json");
-const previousFile = process.argv[3] || path.join(legacy, "followers22-09-2026 15.json");
+function findLatestSnapshots() {
+  if (!fs.existsSync(legacy)) return [];
+
+  return fs.readdirSync(legacy)
+    .filter((name) => /^followers.+\.json$/i.test(name))
+    .filter((name) => name.toLowerCase() !== "followers_diff.json")
+    .map((name) => path.join(legacy, name))
+    .filter((filePath) => fs.statSync(filePath).isFile())
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+}
+
+const discoveredSnapshots = findLatestSnapshots();
+const latestFile = process.argv[2] || discoveredSnapshots[0];
+const previousFile = process.argv[3] || discoveredSnapshots[1];
 const outputFile = process.argv[4] || path.join(legacy, "followers_diff.json");
 
-if (!fs.existsSync(latestFile) || !fs.existsSync(previousFile)) {
+if (!latestFile || !previousFile || !fs.existsSync(latestFile) || !fs.existsSync(previousFile)) {
   console.error(
-    "Usage: node scripts/missingNames.js <latestFile.json> <previousFile.json> [outputFile.json]",
+    "Usage: npm run compare-followers -- [latestFile.json] [previousFile.json] [outputFile.json]",
   );
+  console.error(
+    "Or: node scripts/missingNames.js <latestFile.json> <previousFile.json> [outputFile.json]",
+  );
+  console.error("With no paths, the two newest follower snapshots in data/legacy are compared.");
   process.exit(1);
 }
 

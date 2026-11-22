@@ -185,7 +185,19 @@ not tracked in Git.
 
 Standalone follower comparisons can be run with
 `node scripts/missingNames.js <latest.json> <previous.json> [output.json]`.
+For the simplest option, run `npm run compare-followers`; it automatically
+compares the two newest `followers*.json` snapshots in `data/legacy/`.
 If no output path is supplied, the report is saved in `data/legacy/`.
+
+The latest comparison used snapshots from 21 November and 22 November 2026:
+
+- 2125 unique followers in the latest snapshot.
+- 2126 unique followers in the previous snapshot.
+- New followers: `boundprincessa`, `orciniae-archived`.
+- Missing from the latest snapshot: `boundfaerietales`, `janwetor`, `soardent1y`.
+
+`followers_diff.json` also identifies missing accounts as possible unfollows or
+name changes, rather than confirmed changes.
 
 On the first start after this reorganization, the bot moves existing thread
 files, follower snapshots, audit files, and legacy follower JSON into `data/`.
