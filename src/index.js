@@ -39,7 +39,7 @@ app.get("/authorize", (req, res, next) => {
   next();
 });
 app.use(tumblrAuth.router);
-app.use("/api/threads", createThreadRoutes({ getAccessToken: tumblrAuth.getToken, getReblog: reblogCache.get }));
+app.use("/api/threads", createThreadRoutes({ getAccessToken: tumblrAuth.getToken, getReblog: reblogCache.get, getCachedReblogs: reblogCache.snapshot, verifyCachedPost: reblogCache.verify }));
 app.use("/threads", express.static(path.join(__dirname, "..", "public", "threads")));
 const client = new Client({
   intents: [

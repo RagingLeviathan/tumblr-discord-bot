@@ -187,7 +187,8 @@ Standalone follower comparisons can be run with
 `node scripts/missingNames.js <latest.json> <previous.json> [output.json]`.
 For the simplest option, run `npm run compare-followers`; it automatically
 compares the two newest `followers*.json` snapshots in `data/legacy/`.
-If no output path is supplied, the report is saved in `data/legacy/`.
+The newest files are selected by modification time; the existing diff report is
+excluded. If no output path is supplied, the report is saved in `data/legacy/`.
 
 The latest comparison used snapshots from 21 November and 22 November 2026:
 
@@ -380,11 +381,18 @@ posts, rate limits, and other API errors are shown separately.
    The blog defaults to `BLOG_NAME` from `.env`, or `iobartach` when unset;
    you can change it per post. Tumblr verifies post-ID entries before they are
    saved, so an API key and a publicly accessible post are required. A missing,
-   restricted, or wrong-blog post is not saved. URL entries retain their
-   existing behavior and are not checked until reblogs are fetched.
+   restricted, or wrong-blog post is not saved automatically. If verification
+   fails, the save button is highlighted in blue with the required steps.
+   **Step 1: Use unverified post link** fills the URL form; check the link and
+   press the highlighted **Track thread** (or **Save changes** when editing)
+   to save it without verification. The tracker cannot confirm the
+   blog or post ID in that case, and Tumblr's public API may not provide reblog
+   details for restricted posts. URL entries are not verified when saved.
    Select **Track thread**, use **Refresh** to fetch current reblogs, **Edit**
    to change a saved title or post reference, or **Remove** to stop tracking a
-   post. When editing, **Cancel edit** discards unsaved changes. An unchanged
+   post. **Clear entry form** resets unsaved fields without affecting tracked
+   threads or table filters. When editing, **Cancel edit** discards unsaved
+   changes. An unchanged
    post ID does not need to be verified again. Existing titles that do not
    follow the `w/ partner | story name` format appear in the story field and
    are preserved; add a partner to convert them to the new format.
@@ -407,7 +415,7 @@ ask is answered or removed on Tumblr. Each configured blog has its own list in
 `data/threads/asks_<blog-name>.json`, included in the private data backup.
 
 Use the **gear** in the header to change the accent colour, text size, table
-density, default page size, default post reference and writing-partner
+density, default page size, default post reference and possible-duplicate
 highlights. You can hide the header image, upload a replacement (PNG, JPEG,
 WebP or GIF, up to 2 MB), or restore the default. Save to apply changes; changing the table's page-size
 filter remains temporary. Settings and uploaded images are stored only in this
@@ -434,42 +442,107 @@ when no reblogs exist. Rows without a known author or date sort last. In **Filte
 enable **Show only threads last reblogged by another blog** to exclude
 `BLOG_NAME` (or its `iobartach` fallback). This also hides rows with no reblog,
 loading results, or errors because their last reblogger is unknown.
+Post dates use the browser's local time, displaying the date and year (for
+example, `September 8th, 2026`) above the time (for example, `6.23.25 pm`).
 
 Use the thread title and last reblogger search fields for case-insensitive
 partial matches. The reblogger search uses the displayed saved-post author
 when there are no reblogs; loading or failed lookups do not match until an
-author is known. These searches combine with the other filters.
-Long titles, AU names, blog names and dates can be truncated in the table;
+author is known. The last-reblogger dropdown lists known displayed authors
+as they load and selects an exact name; the selected name remains available
+even if no current result uses it. It can be combined with the text
+search and the other filters.
+When Tumblr supplies a reblogger's blog UUID, newly checked results retain it
+in the reblog cache and the dropdown groups those results by UUID rather than
+name. Older cached entries without UUIDs remain separate until checked again.
+Use **Clear table filters** to clear these filters, including the other-blog
+checkbox; the entry form, sort order and records-per-page setting stay unchanged.
+After saving a thread, the tracker checks its missing or expired reblog result
+even if filters hide it. It keeps the filters and opens the page containing the
+saved thread if it matches; otherwise, the save message explains that it is
+hidden. A failed check is reported without undoing the save.
+Long titles, AU names and blog names can be truncated in the table;
 hover over them to see them in full. Searching and sorting still use the full
 values. On narrower screens, scroll the table horizontally to see all columns.
 
 The writing partner filter groups matching partner names case-insensitively.
-Threads sharing a partner are highlighted, even if other filters hide some
-of them. Each formatted thread has an internal per-partner number in the JSON;
+Select the numbered thread-count badge beneath a title to see the
+partner's tracked entries. Each formatted thread has a per-partner number in the JSON;
 numbers are assigned to existing entries when their collection is first opened,
 and stay unchanged when only the story or post reference is edited. Titles
 without the `w/ partner | story name` format are preserved but do not appear
-in the partner filter. Stop old bot processes before starting this version so
+in the partner filter. Use **Merge** beside a shared-partner entry to manually
+combine it with another entry for the same partner. Choose which post remains;
+the other entry and its title and link are removed. Completed and favourite
+flags are combined; the removed entry's AU and notes are retained only if the
+kept entry has none. If both entries have different notes, combine or clear
+them before merging. Partner numbers are renumbered for the affected partner.
+
+**Notes** opens an editor for a thread's local notes, with a 1,000-character
+limit and a remaining-character counter. Threads with notes show a blue
+**Notes saved** button. Save to keep changes, or cancel to discard them;
+clearing and saving removes the notes and restores the ordinary button. Notes
+are stored in the thread collection and included in data backups, not posted
+to Tumblr.
+
+Rows are highlighted and labelled **Possible duplicate** when their last
+reblogger UUID and exact last-reblog timestamp match another entry, including
+entries on other pages or hidden by filters. If both entries lack UUIDs, their
+reblogger names are compared case-insensitively instead. Entries without
+a known reblog are not matched using their saved-post dates. Matching is a
+clue, not proof: separate posts can share a timestamp, and cached results can
+be stale. Check the posts before merging. Highlighting can be disabled in
+settings; the possible-duplicate labels remain visible. Manual Merge remains
+available for entries sharing a writing partner, whether or not they match.
+
+Use **Update blog IDs** to verify saved posts and update missing reblogger
+UUIDs across the whole collection, even on hidden pages. It reports progress
+and posts requiring manual review; **Stop update** stops after the current
+request. Keep the tracker page open until it finishes. It stops on Tumblr rate
+limits; retry after the cooldown. Verification
+and reblog checks share the one-second request pacing and cooldown. This may
+take several minutes and uses Tumblr API calls.
+
+The tracker stores a verified saved-post blog UUID and its last verified name
+without changing the original saved URL. Later reblog and trail lookups use the
+UUID, so they can work after a rename. Run **Update blog IDs** again to verify
+the current name and update the displayed link. A blog renamed before its UUID
+was captured may need manual correction; the tracker does not guess. UUIDs
+identify blogs rather than people and may change in exceptional circumstances.
+Editing a post reference clears its old UUID unless the new reference was
+verified. Adding by URL does not verify it until this update is run.
+
+Stop old bot processes before starting this version so
 they cannot overwrite the new numbers.
 
 Choose 5, 10, 25, 50, or 100 records per page and use **First**, **Previous**,
-**Next**, and **Last** to navigate the filtered, sorted results. Reblog details
-for all pages are loaded so sorting and filtering can use them.
+**Next**, and **Last** to navigate the filtered, sorted results. Cached reblog
+details for all pages are loaded together so sorting and filtering can use them.
+Threads without a cached result have an unknown reblogger and date until checked;
+they may be excluded by reblogger filters and cannot be flagged as possible
+duplicates yet.
 
 The web tracker and `/thread latest` share `data/reblog-cache.json`, including
-across bot restarts. A successful lookup is reused for one hour; after that,
-the next page load, **Refresh**, or `/thread latest` checks Tumblr again. The
-display shows when the information was last checked. Refresh does not bypass
-the one-hour cache. Requests for the same post are combined, and Tumblr
-requests for reblog lookups are made one at a time, at least one second apart.
-A first load with many uncached threads can therefore take a while.
+across bot restarts. The tracker displays all cached results immediately, including
+older results marked as needing a check. It automatically checks missing or
+more-than-one-hour-old results only when their rows are on the visible page.
+The newly saved or edited thread is also checked when its result is missing or
+expired, even if it is hidden by a filter.
+Changing filters, sorting or pages can make other rows visible and trigger their
+checks; a check already in progress may finish after a row is hidden. **Refresh**
+reloads the cache and rechecks expired or missing results on the visible page.
+Use **Check** on a row to explicitly check that thread even within the hour.
+`/thread latest` continues to reuse results for one hour. Requests for the same
+post are combined, and Tumblr requests for reblog lookups are made one at a
+time, at least one second apart.
 
 If Tumblr returns HTTP 429, further reblog lookups pause until its `Retry-After`
 time, or for 15 minutes when it provides no usable time. The pause survives a
 restart. Other failed lookups wait one minute before retrying. When an older
 result exists, it is shown with its last-check time and a warning; without a
-cached result, the error is shown instead. Refresh again after the pause:
-there is no background polling. Adding a post by ID, trail lookups and other
+cached result, the error is shown instead. Use **Check** or refresh the page after
+the pause; a failed check is not retried automatically during that page load.
+There is no background polling. Adding a post by ID, trail lookups and other
 Discord commands make their own API calls and do not use this reblog cache or
 its queue. The cache may retain results for removed threads; stop the bot before
 editing or deleting it. Deleting it also clears the locally recorded cooldown.
@@ -480,7 +553,10 @@ change is saved with the rest of the form. The star independently toggles
 whether it is a favourite.
 Use **Filter by status** for ongoing, completed, or favourite threads, or show
 all threads. **Show starred threads first** groups favourites ahead of other
-results while preserving the selected sort within each group. These controls
+results while preserving the selected sort within each group; it does not
+hide unstarred threads. The message beside the toggle shows how many starred
+threads match the current filters. Select a hollow star beside a thread to
+mark it as a favourite. These controls
 combine with the other filters. New and existing threads start ongoing and
 unstarred. Completed threads remain in the same JSON collection, rather than
 being moved or deleted, and continue to appear in Discord thread commands.
@@ -604,6 +680,7 @@ data. Scheduled notifications are not included.
 
 ## Future improvements
 
+- Add internationalisation for interface text and locale-aware dates and times.
 - Investigate and test using the Discord bot in a private one-to-one direct
   message, including command availability, permissions and privacy. DM support
   has not yet been verified.

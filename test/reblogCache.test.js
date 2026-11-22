@@ -49,6 +49,135 @@ test("persists one-hour results, deduplicates requests, and spaces Tumblr calls"
   assert.equal(calls.length, 3);
 });
 
+test("persists a reblogger's UUID without invalidating older cache entries", async (t) => {
+  const f = setup(t);
+  const api = { get: async () => ({ data: { response: { notes: [
+    { type: "reblog", blog_name: "poster", blog_uuid: "t:Test_UUID", timestamp: 1700000000 },
+  ] } } }) };
+  const cache = createReblogCache(f.options);
+  assert.equal((await cache.get(thread("1"), "key", api)).lastReblog.blogUuid, "t:Test_UUID");
+  assert.equal(createReblogCache(f.options).snapshot([thread("1")])[0].lastReblog.blogUuid, "t:Test_UUID");
+  const saved = JSON.parse(fs.readFileSync(f.file, "utf8"));
+  delete saved.entries[0].result.lastReblog.blogUuid;
+  fs.writeFileSync(f.file, JSON.stringify(saved));
+  assert.equal(createReblogCache(f.options).snapshot([thread("1")])[0].lastReblog.blog, "poster");
+});
+
+test("verifies and persists blog identities, resolves renames, and respects cooldown", async (t) => {
+  const f = setup(t);
+  const file = path.join(path.dirname(f.file), "threads.json");
+  fs.writeFileSync(file, "[]");
+  const store = createThreadStore(file);
+  store.add("w/ partner | story", "https://www.tumblr.com/root/123", "au-1");
+  store.setFlags("root", "123", { completed: true, favourite: true });
+  const calls = [];
+  let rename = false;
+  let limited = false;
+  const api = { get: async (url, options) => {
+    calls.push({ url, time: f.time() });
+    if (limited) throw Object.assign(new Error("limited"), { response: { status: 429 } });
+    if (url.endsWith("/notes")) return { data: { response: { notes: [
+      { type: "reblog", blog_name: "author", blog_uuid: "t:Author", timestamp: 100 },
+    ] } } };
+    const name = rename ? "renamed" : "root";
+    return { data: { response: { blog: { name, uuid: "t:Root" }, posts: [
+      { id_string: options.params.id, blog_name: name },
+    ] } } };
+  } };
+  const cache = createReblogCache(f.options);
+  const app = express();
+  app.use("/api/threads", createThreadRoutes({ store, api, getBlog: () => "iobartach", getApiKey: () => "key",
+    getReblog: cache.get, getCachedReblogs: cache.snapshot, verifyCachedPost: cache.verify }));
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}/api/threads/root/123`;
+  const identity = () => fetch(`${base}/identity`, { method: "POST", headers: { "X-Thread-Blog": "iobartach" } });
+  assert.equal((await fetch(`${base}/identity`, { method: "POST" })).status, 400);
+  let response = await identity();
+  assert.equal(response.status, 200);
+  let saved = await response.json();
+  assert.equal(saved.blogUuid, "t:Root");
+  assert.equal(saved.resolvedBlog, "root");
+  assert.equal(saved.auId, "au-1");
+  assert.equal(saved.completed, true);
+  assert.equal(saved.favourite, true);
+  assert.equal(saved.url, "https://www.tumblr.com/root/123");
+  rename = true;
+  response = await identity();
+  assert.equal(response.status, 200);
+  saved = await response.json();
+  assert.equal(saved.resolvedBlog, "renamed");
+  assert.match(calls[1].url, /t%3ARoot\/posts$/);
+  const reblog = await (await fetch(`${base}/reblog?force=1`)).json();
+  assert.equal(reblog.lastReblog.blogUuid, "t:Author");
+  assert.match(calls[2].url, /t%3ARoot\/notes$/);
+  assert.ok(calls[1].time - calls[0].time >= 1000);
+  assert.ok(calls[2].time - calls[1].time >= 1000);
+  store.update("root", "123", "w/ partner | edited", saved.url, "au-1", true);
+  assert.equal(store.list()[0].blogUuid, "t:Root");
+  assert.equal(store.list()[0].resolvedBlog, "renamed");
+  limited = true;
+  assert.equal((await identity()).status, 429);
+  const before = calls.length;
+  assert.equal((await identity()).status, 429);
+  assert.equal(calls.length, before);
+  assert.equal(store.list()[0].resolvedBlog, "renamed");
+});
+
+test("does not save an identity for an unverified post or a mismatched UUID", async (t) => {
+  const f = setup(t);
+  const file = path.join(path.dirname(f.file), "threads.json");
+  fs.writeFileSync(file, "[]");
+  const store = createThreadStore(file);
+  store.add("Story", "https://www.tumblr.com/root/123");
+  const cache = createReblogCache(f.options);
+  let response = { blog: { name: "root", uuid: "t:Root" }, posts: [{ id_string: "999", blog_name: "root" }] };
+  const api = { get: async () => ({ data: { response } }) };
+  await assert.rejects(cache.verify(store.list()[0], "key", api), /unexpected/);
+  assert.equal(store.list()[0].blogUuid, undefined);
+  response = { blog: { name: "root" }, posts: [{ id_string: "123", blog_name: "root" }] };
+  assert.equal((await cache.verify(store.list()[0], "key", api)).blogUuid, undefined);
+  store.setBlogIdentity("root", "123", "t:Root", "root");
+  response = { blog: { name: "renamed", uuid: "t:Different" }, posts: [{ id_string: "123", blog_name: "renamed" }] };
+  await assert.rejects(cache.verify(store.list()[0], "key", api), /unexpected/);
+  assert.equal(store.list()[0].resolvedBlog, "root");
+  store.update("root", "123", "Story", "https://www.tumblr.com/other/456");
+  assert.equal(store.list()[0].blogUuid, undefined);
+});
+
+test("reads only tracked cached results without Tumblr calls and supports explicit checks", async (t) => {
+  const f = setup(t);
+  let calls = 0;
+  const api = { get: async () => {
+    calls++;
+    return { data: { response: { notes: [{ type: "reblog", blog_name: "poster", timestamp: 1700000000 }] } } };
+  } };
+  const cache = createReblogCache(f.options);
+  await cache.get(thread("1"), "key", api);
+  await cache.get(thread("2"), "key", api);
+  const snapshot = cache.snapshot([thread("1"), thread("3")]);
+  assert.equal(snapshot.length, 1);
+  assert.equal(snapshot[0].postId, "1");
+  assert.equal(snapshot[0].cache.stale, false);
+  assert.equal(snapshot[0].cache.freshUntil, snapshot[0].cache.checkedAt + 60 * 60 * 1000);
+  assert.equal(calls, 2);
+  f.advance(60 * 60 * 1000);
+  assert.equal(cache.snapshot([thread("1")])[0].cache.stale, true);
+  assert.equal(calls, 2);
+  await cache.get(thread("1"), "key", api);
+  await cache.get(thread("1"), "key", api, { force: true });
+  assert.equal(calls, 4);
+  api.get = async () => {
+    calls++;
+    throw Object.assign(new Error("limited"), { response: { status: 429 } });
+  };
+  assert.match((await cache.get(thread("1"), "key", api, { force: true })).cache.warning, /rate limit/i);
+  assert.equal((await cache.get(thread("1"), "key", api, { force: true })).cache.stale, true);
+  assert.equal(calls, 5);
+});
+
 test("pauses after 429 and returns clearly marked stale data across restarts", async (t) => {
   const f = setup(t);
   let calls = 0;
@@ -128,7 +257,7 @@ test("web and Discord share cached results and report stale rate-limited data", 
   } };
   const cache = createReblogCache(f.options);
   const app = express();
-  app.use("/api/threads", createThreadRoutes({ store, api, getApiKey: () => "key", getReblog: cache.get }));
+  app.use("/api/threads", createThreadRoutes({ store, api, getApiKey: () => "key", getReblog: cache.get, getCachedReblogs: cache.snapshot }));
   const server = await new Promise((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
   });
@@ -137,6 +266,11 @@ test("web and Discord share cached results and report stale rate-limited data", 
   const web = await (await fetch(url)).json();
   assert.equal(web.lastReblog.blog, "poster");
   assert.equal(web.cache.stale, false);
+  const cacheResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/threads/reblogs/cache`);
+  assert.equal(cacheResponse.status, 200);
+  assert.equal((await cacheResponse.json())[0].postId, "1");
+  assert.equal(calls, 1);
+  assert.equal((await fetch(`${url}?force=invalid`)).status, 400);
   const commands = new SlashCommands({ store, api, getApiKey: () => "key", getReblog: cache.get });
   const interaction = {
     commandName: "thread",
@@ -144,10 +278,14 @@ test("web and Discord share cached results and report stale rate-limited data", 
   };
   assert.match((await commands.execute(interaction)).content, /Last checked:/);
   assert.equal(calls, 1);
+  const manual = await (await fetch(`${url}?force=1`)).json();
+  assert.equal(manual.cache.stale, true);
+  assert.match(manual.cache.warning, /rate limit/i);
+  assert.equal(calls, 2);
   f.advance(60 * 60 * 1000);
   const stale = await (await fetch(url)).json();
   assert.equal(stale.cache.stale, true);
   assert.match(stale.cache.warning, /rate limit/i);
   assert.match((await commands.execute(interaction)).content, /rate limit/i);
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
 });

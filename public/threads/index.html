@@ -43,13 +43,21 @@
         <label id="extract-url-field">Paste post URL (optional)<input name="extractUrl" type="text" autocomplete="off" aria-describedby="extract-url-help" placeholder="https://www.tumblr.com/blog/post-id"><span id="extract-url-help" role="status" aria-live="polite">Fills the post ID and blog name.</span></label>
       </form>
       <div class="form-actions">
-        <button id="track-thread" type="submit" form="add-thread">Track thread</button>
+        <div class="track-action">
+          <button id="track-thread" type="submit" form="add-thread" aria-describedby="unverified-save-help">Track thread</button>
+          <span id="unverified-save-help" role="status" aria-live="polite" hidden></span>
+        </div>
+        <button id="use-unverified-link" type="button" class="secondary" hidden>Step 1: Use unverified post link</button>
+        <button id="clear-thread-form" type="button" class="secondary" title="Clear the entry form without changing saved threads or filters">Clear entry form</button>
         <label id="edit-completed-field" class="filter-toggle" hidden><input name="completed" form="add-thread" type="checkbox"> Mark as completed</label>
         <section class="filters" aria-label="Reblogger filter">
           <label class="filter-toggle"><input id="other-rebloggers" type="checkbox" disabled> Show only threads last reblogged by another blog</label>
           <p class="hint" id="filter-help">Loading configured blog...</p>
         </section>
-        <label class="filter-toggle favourites-first"><input id="favourites-first" type="checkbox"> Show starred threads first</label>
+        <div class="favourites-first">
+          <label class="filter-toggle"><input id="favourites-first" type="checkbox" aria-describedby="favourites-first-help"> Show starred threads first</label>
+          <p class="hint" id="favourites-first-help" role="status" aria-live="polite" hidden></p>
+        </div>
         <button id="manage-aus" type="button" class="secondary">Manage AUs</button>
         <button id="cancel-edit" type="button" class="secondary" hidden>Cancel edit</button>
       </div>
@@ -62,15 +70,17 @@
       <label>Filter by thread title<input id="title-filter" type="search" placeholder="Search titles"></label>
       <label>Filter by writing partner<select id="partner-filter"><option value="">All writing partners</option></select></label>
       <label>Filter by last reblogger<input id="reblogger-filter" type="search" placeholder="Search blog names"></label>
+      <label>Choose last reblogger<select id="reblogger-select"><option value="">All rebloggers</option></select></label>
       <label>Filter by AU<select id="au-filter"><option value="">All AUs</option><option value="unassigned">No AU</option></select></label>
       <label>Filter by status<select id="status-filter"><option value="all">All threads</option><option value="ongoing">Ongoing</option><option value="completed">Completed</option><option value="favourites">Favourites</option></select></label>
       <label>Records per page<select id="page-size"><option>5</option><option selected>10</option><option>25</option><option>50</option><option>100</option></select></label>
+      <button id="reset-filters" type="button" class="secondary" title="Clear table filters without changing the entry form">Clear table filters</button>
     </div>
     <div class="random-thread-actions">
       <button id="random-thread" type="button" class="secondary" disabled aria-describedby="random-thread-help">Open random thread</button>
       <span id="random-thread-help" class="hint">Chooses from all matching threads and opens the latest reblog in a new tab, or the saved post if no reblog link is available.</span>
     </div>
-    <p class="hint">Tick a thread when completed; select its star to mark it as a favourite. <span id="partner-highlight-hint">Threads sharing a writing partner are highlighted.</span></p>
+    <p class="hint">Tick a thread when completed; select its star to mark it as a favourite. Numbered badges show entries with the same writing partner. <span id="partner-highlight-hint">Highlighted possible duplicates share the same last reblogger UUID and exact timestamp (or the same name if both UUIDs are unknown); check the posts before merging.</span></p>
     <div class="table-wrap">
       <table>
         <colgroup>
@@ -89,6 +99,14 @@
       <button id="last-page" type="button" class="secondary" aria-label="Last page">Last</button>
     </nav>
     <p class="hint">The latest reblog can be from any branch, not necessarily your roleplay partner.</p>
+    <p class="hint">Cached results are shown for all pages. Only expired or missing results on the visible page are checked automatically; use Check for an individual thread. Reblogger filters, sorting and possible-duplicate highlights use the results currently known.</p>
+    <div class="random-thread-actions">
+      <button id="update-blog-ids" type="button" class="secondary">Update blog IDs</button>
+      <button id="cancel-blog-ids" type="button" class="secondary" hidden>Stop update</button>
+      <span class="hint">Verify tracked posts and fill missing reblogger IDs using Tumblr. This can take several minutes.</span>
+    </div>
+    <p id="blog-ids-status" role="status" aria-live="polite"></p>
+    <ul id="blog-ids-errors"></ul>
     <dialog id="settings-dialog" aria-labelledby="settings-title">
       <h2 id="settings-title">Settings</h2>
       <p class="hint">Saved only in this browser on this address. These settings are not included in data backups.</p>
@@ -106,7 +124,7 @@
           <label>Accent colour<select name="accent"><option value="blue">Blue</option><option value="teal">Teal</option><option value="purple">Purple</option><option value="rose">Rose</option></select></label>
           <label>Text size<select name="textSize"><option value="normal">Normal</option><option value="large">Large</option><option value="larger">Larger</option></select></label>
           <label>Table density<select name="density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option><option value="spacious">Spacious</option></select></label>
-          <label class="filter-toggle"><input name="partnerHighlights" type="checkbox"> Highlight threads with the same writing partner</label>
+          <label class="filter-toggle"><input name="partnerHighlights" type="checkbox"> Highlight possible duplicates</label>
         </fieldset>
         <fieldset>
           <legend>Table</legend>
@@ -159,6 +177,44 @@
       <p id="au-message" role="status" aria-live="polite"></p>
       <ul id="au-list" class="au-list"></ul>
       <button id="au-close" type="button" class="secondary">Close</button>
+    </dialog>
+    <dialog id="merge-dialog" aria-labelledby="merge-title">
+      <h2 id="merge-title">Merge threads</h2>
+      <p id="merge-description" class="hint"></p>
+      <form id="merge-form">
+        <label>Thread to merge
+          <select id="merge-with" required></select>
+        </label>
+        <label>Post to keep
+          <select id="merge-primary" required></select>
+        </label>
+        <p class="hint">The other entry and its title and link will be removed. Completed and favourite flags are combined; its AU is kept only if the chosen entry has none. Different notes must be combined or cleared before merging.</p>
+        <div class="merge-actions">
+          <button type="submit">Merge</button>
+          <button id="merge-cancel" type="button" class="secondary">Cancel</button>
+        </div>
+      </form>
+      <p id="merge-message" class="error" role="status" aria-live="polite"></p>
+    </dialog>
+    <dialog id="notes-dialog" aria-labelledby="notes-title">
+      <h2 id="notes-title">Thread notes</h2>
+      <p id="notes-thread-title"></p>
+      <form id="notes-form">
+        <label>Notes<textarea id="notes-input" maxlength="1000" rows="8" aria-describedby="notes-remaining"></textarea></label>
+        <p id="notes-remaining" class="hint" aria-live="polite"></p>
+        <div class="merge-actions">
+          <button type="submit">Save notes</button>
+          <button id="notes-cancel" type="button" class="secondary">Cancel</button>
+        </div>
+      </form>
+      <p id="notes-message" class="error" role="status" aria-live="polite"></p>
+    </dialog>
+    <dialog id="partner-dialog" aria-labelledby="partner-dialog-title">
+      <h2 id="partner-dialog-title">Threads with this partner</h2>
+      <p id="partner-dialog-summary"></p>
+      <p class="hint">These entries share a writing partner, but they are not necessarily duplicates. The numbers distinguish the saved entries.</p>
+      <ul id="partner-dialog-list"></ul>
+      <button id="partner-dialog-close" type="button" class="secondary">Close</button>
     </dialog>
     <dialog id="trail-dialog" aria-labelledby="trail-title">
       <h2 id="trail-title">Reblog trail</h2>

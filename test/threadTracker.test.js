@@ -100,7 +100,7 @@ test("verifies the exact Tumblr post with a lossless string ID", async () => {
   await verifyPost(thread, "key", api);
   const response = (posts) => ({ get: async () => ({ data: { response: { posts } } }) });
   await assert.rejects(verifyPost(thread, "", api), /CONSUMER_KEY/);
-  await assert.rejects(verifyPost(thread, "key", response([])), /not found or inaccessible/);
+  await assert.rejects(verifyPost(thread, "key", response([])), /could not find or access/);
   await assert.rejects(verifyPost(thread, "key", response([{ id_string: "999", blog_name: "iobartach" }])), /unexpected/);
   await assert.rejects(verifyPost(thread, "key", response([{ id_string: thread.postId, blog_name: "other" }])), /unexpected/);
   await assert.rejects(verifyPost(thread, "key", { get: async () => ({ data: {} }) }), /unexpected/);
@@ -211,6 +211,62 @@ test("persists completion and favourite flags through other thread changes", (t)
   assert.throws(() => store.list(), /invalid completed flag/);
 });
 
+test("stores notes, preserves them through thread edits, and prevents losing notes in merges", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-notes-test-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "threads.json");
+  fs.writeFileSync(file, "[]");
+  const store = createThreadStore(file);
+  store.add("w/ partner | one", "https://www.tumblr.com/root/1");
+  store.add("w/ partner | two", "https://www.tumblr.com/root/2");
+  assert.equal(store.setNotes("root", "missing", "text"), null);
+  for (const invalid of [null, 1, "x".repeat(1001)]) {
+    assert.throws(() => store.setNotes("root", "1", invalid), /1,000/);
+  }
+  const notes = ` first line\n${"x".repeat(988)}`;
+  assert.equal(notes.length, 1000);
+  store.setNotes("root", "1", notes);
+  store.setFlags("root", "1", { favourite: true });
+  store.setBlogIdentity("root", "1", "t:Root", "root");
+  store.update("root", "1", "w/ partner | edited", "https://www.tumblr.com/other/3");
+  assert.equal(createThreadStore(file).list()[0].notes, notes);
+  store.setNotes("root", "2", "different");
+  assert.throws(() => store.merge("other", "3", "root", "2"), /different notes/);
+  assert.equal(store.list().length, 2);
+  store.setNotes("other", "3", "");
+  const merged = store.merge("other", "3", "root", "2");
+  assert.equal(merged.notes, "different");
+  store.setNotes("other", "3", "");
+  assert.equal(store.list()[0].notes, undefined);
+  assert.equal(JSON.parse(fs.readFileSync(file))[0].notes, undefined);
+  fs.writeFileSync(file, JSON.stringify([{ title: "Invalid", url: postUrl, notes: "x".repeat(1001) }]));
+  assert.throws(() => store.list(), /invalid notes/);
+});
+
+test("merges a pair manually and preserves metadata", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-merge-test-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "threads.json");
+  fs.writeFileSync(file, JSON.stringify([
+    { title: "w/ niratias' mox | first", url: "https://www.tumblr.com/iobartach/799035908009721856", partnerNumber: 1 },
+    { title: "w/ niratias' mox | second", url: "https://www.tumblr.com/niratias/826783631026552832", partnerNumber: 2, favourite: true },
+  ]));
+  const store = createThreadStore(file);
+  store.setFlags("iobartach", "799035908009721856", { completed: true });
+  const merged = store.merge(
+    "niratias",
+    "826783631026552832",
+    "iobartach",
+    "799035908009721856",
+  );
+  assert.equal(merged.completed, true);
+  assert.equal(merged.favourite, true);
+  assert.equal(merged.partnerNumber, 1);
+  assert.equal(store.list().length, 1);
+  assert.equal(store.list()[0].title, "w/ niratias' mox | second");
+  assert.equal(store.merge("niratias", "826783631026552832", "other", "123"), null);
+});
+
 test("assigns stable per-partner numbers without changing legacy titles or backup data", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-partner-test-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -267,7 +323,7 @@ test("requests newest reblog from Tumblr and returns its blog, date and safe pos
       assert.deepEqual(options.params, { id: "833900598515695616", mode: "reblogs_with_tags", api_key: "key" });
       assert.equal(options.timeout, 10000);
       return { data: { response: { notes: [
-        { type: "reblog", blog_name: "Partner", timestamp: 1700000000, post_id: "833900598515695617" },
+        { type: "reblog", blog_name: "Partner", blog_uuid: "t:Test_UUID", timestamp: 1700000000, post_id: "833900598515695617" },
         { type: "reblog", blog_name: "older", timestamp: 1600000000, post_id: "2" },
       ] } } };
     },
@@ -275,6 +331,7 @@ test("requests newest reblog from Tumblr and returns its blog, date and safe pos
   assert.deepEqual(await getLastReblog(thread, "key", api), {
     lastReblog: {
       blog: "Partner",
+      blogUuid: "t:Test_UUID",
       timestamp: 1700000000,
       url: "https://www.tumblr.com/partner/833900598515695617",
     },

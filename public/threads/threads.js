@@ -4,6 +4,10 @@ const table = document.querySelector("#threads");
 const form = document.querySelector("#add-thread");
 const message = document.querySelector("#message");
 const refreshButton = document.querySelector("#refresh");
+const updateIdsButton = document.querySelector("#update-blog-ids");
+const cancelIdsButton = document.querySelector("#cancel-blog-ids");
+const updateIdsStatus = document.querySelector("#blog-ids-status");
+const updateIdsErrors = document.querySelector("#blog-ids-errors");
 const randomThreadButton = document.querySelector("#random-thread");
 const referenceType = form.elements.referenceType;
 const blogInput = form.elements.blog;
@@ -19,9 +23,11 @@ const editCompletedField = document.querySelector("#edit-completed-field");
 const titleFilter = document.querySelector("#title-filter");
 const partnerFilter = document.querySelector("#partner-filter");
 const rebloggerFilter = document.querySelector("#reblogger-filter");
+const rebloggerSelect = document.querySelector("#reblogger-select");
 const auFilter = document.querySelector("#au-filter");
 const statusFilter = document.querySelector("#status-filter");
 const favouritesFirst = document.querySelector("#favourites-first");
+const favouritesFirstHelp = document.querySelector("#favourites-first-help");
 const pageSize = document.querySelector("#page-size");
 const pageStatus = document.querySelector("#page-status");
 const firstPage = document.querySelector("#first-page");
@@ -35,7 +41,10 @@ const auList = document.querySelector("#au-list");
 const auSubmit = auForm.querySelector('button[type="submit"]');
 const auCancelEdit = document.querySelector("#au-cancel-edit");
 const submitButton = document.querySelector("#track-thread");
+const unverifiedSaveHelp = document.querySelector("#unverified-save-help");
+const clearFormButton = document.querySelector("#clear-thread-form");
 const cancelButton = document.querySelector("#cancel-edit");
+const unverifiedLinkButton = document.querySelector("#use-unverified-link");
 const otherRebloggers = document.querySelector("#other-rebloggers");
 const filterHelp = document.querySelector("#filter-help");
 const sortButtons = Array.from(document.querySelectorAll(".sort"));
@@ -46,6 +55,24 @@ const trailStatus = document.querySelector("#trail-status");
 const trailResults = document.querySelector("#trail-results");
 const trailPublic = document.querySelector("#trail-public");
 const trailAuthenticated = document.querySelector("#trail-authenticated");
+const mergeDialog = document.querySelector("#merge-dialog");
+const mergeDescription = document.querySelector("#merge-description");
+const mergeForm = document.querySelector("#merge-form");
+const mergeWith = document.querySelector("#merge-with");
+const mergePrimary = document.querySelector("#merge-primary");
+const mergeMessage = document.querySelector("#merge-message");
+const mergeCancel = document.querySelector("#merge-cancel");
+const partnerDialog = document.querySelector("#partner-dialog");
+const partnerDialogSummary = document.querySelector("#partner-dialog-summary");
+const partnerDialogList = document.querySelector("#partner-dialog-list");
+const notesDialog = document.querySelector("#notes-dialog");
+const notesTitle = document.querySelector("#notes-thread-title");
+const notesForm = document.querySelector("#notes-form");
+const notesInput = document.querySelector("#notes-input");
+const notesRemaining = document.querySelector("#notes-remaining");
+const notesMessage = document.querySelector("#notes-message");
+const notesCancel = document.querySelector("#notes-cancel");
+const notesSave = notesForm.querySelector('button[type="submit"]');
 const askButton = document.querySelector("#manage-asks");
 const askCountStatus = document.querySelector("#ask-count-status");
 const askDialog = document.querySelector("#ask-dialog");
@@ -81,6 +108,12 @@ let editingThread = null;
 let originalTitleFields = null;
 let lastValidPostId = idInput.value;
 let defaultPostReference = "id";
+let mergeThread = null;
+let visibleItems = [];
+let checkingVisible = false;
+let cancelIds = false;
+let notesThread = null;
+let notesBlog = null;
 
 function clearExtractUrl() {
   extractUrlInput.value = "";
@@ -88,21 +121,36 @@ function clearExtractUrl() {
   extractUrlHelp.textContent = "Fills the post ID and blog name.";
 }
 
+function showUnverifiedSavePrompt(show, chooseLinkFirst = false) {
+  submitButton.classList.toggle("needs-confirmation", show);
+  unverifiedSaveHelp.hidden = !show;
+  const action = editingThread ? "Save changes" : "Track thread";
+  unverifiedSaveHelp.textContent = !show ? "" : chooseLinkFirst
+    ? `Not saved yet. Select Step 1 first, then press ${action}.`
+    : `Step 2: Not saved yet. Check the link, then press ${action}.`;
+}
+
 function resetForm() {
+  unverifiedLinkButton.hidden = true;
+  showUnverifiedSavePrompt(false);
   editingThread = null;
   originalTitleFields = null;
   form.reset();
   referenceType.value = defaultPostReference;
   clearExtractUrl();
+  document.querySelector("#post-id-help").textContent = "Digits only.";
   lastValidPostId = idInput.value;
   partnerInput.required = true;
   submitButton.textContent = "Track thread";
+  clearFormButton.hidden = false;
   cancelButton.hidden = true;
   editCompletedField.hidden = true;
   updateReferenceFields();
 }
 
 function editThread(thread) {
+  unverifiedLinkButton.hidden = true;
+  showUnverifiedSavePrompt(false);
   clearExtractUrl();
   editingThread = thread;
   const formatted = /^w\/\s+(.+?)\s+\|\s+(.+)$/i.exec(thread.title);
@@ -123,6 +171,7 @@ function editThread(thread) {
   }
   lastValidPostId = idInput.value;
   submitButton.textContent = "Save changes";
+  clearFormButton.hidden = true;
   cancelButton.hidden = false;
   message.textContent = "";
   updateReferenceFields();
@@ -342,6 +391,8 @@ async function request(url, options) {
   if (!response.ok) {
     const error = new Error(data.error || `Request failed (${response.status}).`);
     error.duplicate = data.duplicate;
+    error.status = response.status;
+    error.canSaveUnverified = data.canSaveUnverified === true;
     throw error;
   }
   return data;
@@ -372,13 +423,25 @@ function linkCell(row, text, url) {
 
 function renderThread(thread) {
   const row = table.insertRow();
-  const title = linkCell(row, thread.title, thread.url);
+  const title = linkCell(row, thread.title, thread.resolvedBlog
+    ? PostReference.postFromId(thread.resolvedBlog, thread.postId).url : thread.url);
   title.className = "thread-title";
   const duplicateNotice = document.createElement("span");
   duplicateNotice.className = "sr-only";
-  duplicateNotice.textContent = "Shared writing partner. ";
+  duplicateNotice.textContent = "Threads share a writing partner. ";
   duplicateNotice.hidden = true;
   title.append(duplicateNotice);
+  const partnerBadge = document.createElement("button");
+  partnerBadge.type = "button";
+  partnerBadge.className = "thread-partner-badge";
+  partnerBadge.hidden = true;
+  partnerBadge.addEventListener("click", () => showPartnerThreads(thread));
+  title.append(partnerBadge);
+  const duplicateBadge = document.createElement("span");
+  duplicateBadge.className = "possible-duplicate-badge";
+  duplicateBadge.hidden = true;
+  duplicateBadge.title = "These entries share a last-reblog timestamp and reblogger UUID (or name if both UUIDs are unknown); they may be different posts.";
+  title.append(duplicateBadge);
   const controls = document.createElement("span");
   controls.className = "thread-title-controls";
   const completed = document.createElement("input");
@@ -433,11 +496,10 @@ function renderThread(thread) {
   const blog = cell(row, thread.blog);
   blog.className = "blog-cell";
   blog.title = thread.blog;
-  const poster = cell(row, "Loading...");
+  const poster = cell(row, "Not checked");
   poster.className = "reblogger-cell";
   const date = cell(row, "—");
   date.className = "date-cell";
-  const item = { thread, row, au, poster, date, duplicateNotice, lastReblog: null, status: "loading" };
   const actions = cell(row, "");
   const actionGroup = document.createElement("div");
   actionGroup.className = "row-actions";
@@ -449,7 +511,7 @@ function renderThread(thread) {
   findTrail.addEventListener("click", () => {
     trailThread = thread;
     trailTitle.textContent = `Reblog trail: ${thread.title}`;
-    trailOpen.href = thread.url;
+    trailOpen.href = thread.resolvedBlog ? PostReference.postFromId(thread.resolvedBlog, thread.postId).url : thread.url;
     trailResults.replaceChildren();
     trailStatus.textContent = "Choose a lookup method, or open the post on Tumblr.";
     trailDialog.showModal();
@@ -467,6 +529,34 @@ function renderThread(thread) {
   edit.textContent = "Edit";
   edit.setAttribute("aria-label", `Edit ${thread.title}`);
   edit.addEventListener("click", () => editThread(thread));
+  const notes = document.createElement("button");
+  notes.type = "button";
+  notes.className = "secondary";
+  updateNotesButton(notes, thread);
+  notes.addEventListener("click", () => {
+    notesThread = thread;
+    notesBlog = defaultBlog;
+    notesTitle.textContent = thread.title;
+    notesInput.value = thread.notes || "";
+    updateNotesRemaining();
+    notesMessage.textContent = "";
+    notesDialog.showModal();
+    notesInput.focus();
+  });
+  const merge = document.createElement("button");
+  merge.type = "button";
+  merge.className = "secondary";
+  merge.textContent = "Merge";
+  merge.setAttribute("aria-label", `Merge ${thread.title} with another thread`);
+  merge.hidden = true;
+  merge.addEventListener("click", () => openMergeDialog(thread));
+  const check = document.createElement("button");
+  check.type = "button";
+  check.className = "secondary";
+  check.textContent = "Check";
+  check.setAttribute("aria-label", `Check latest reblog for ${thread.title}`);
+  const item = { thread, row, au, poster, date, duplicateNotice, partnerBadge, duplicateBadge, merge, check, notes, lastReblog: null, status: "done", checkState: "needed" };
+  check.addEventListener("click", () => loadReblog(item, true));
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "remove";
@@ -480,6 +570,8 @@ function renderThread(thread) {
       row.remove();
       items = items.filter((entry) => entry !== item);
       updatePartnerOptions();
+      updateDuplicateHighlights();
+      updateRebloggerOptions();
       if (editingThread && threadPath(editingThread) === threadPath(thread)) resetForm();
       updateTable();
     } catch (error) {
@@ -487,10 +579,170 @@ function renderThread(thread) {
       remove.disabled = false;
     }
   });
-  actionGroup.append(edit, findTrail, search, remove);
+  actionGroup.append(edit, notes, findTrail, search, merge, check, remove);
   actions.append(actionGroup);
   return item;
 }
+
+function updateNotesButton(button, thread) {
+  const hasNotes = Boolean(thread.notes);
+  button.classList.toggle("has-notes", hasNotes);
+  button.textContent = hasNotes ? "Notes saved" : "Notes";
+  button.title = hasNotes ? "View or edit saved notes" : "Add notes";
+  button.setAttribute("aria-label", `${hasNotes ? "Saved notes" : "Add notes"} for ${thread.title}`);
+}
+
+function updateNotesRemaining() {
+  notesRemaining.textContent = `${1000 - notesInput.value.length} characters remaining`;
+}
+
+notesInput.addEventListener("input", updateNotesRemaining);
+notesCancel.addEventListener("click", () => notesDialog.close());
+notesDialog.addEventListener("cancel", (event) => {
+  if (notesSave.disabled) event.preventDefault();
+});
+notesForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!notesThread || !notesBlog || notesBlog !== defaultBlog) {
+    notesMessage.textContent = "The configured blog changed. Refresh the thread list before saving notes.";
+    return;
+  }
+  const thread = notesThread;
+  const blog = notesBlog;
+  notesSave.disabled = true;
+  notesCancel.disabled = true;
+  notesInput.disabled = true;
+  notesMessage.textContent = "";
+  try {
+    const saved = await request(`${threadPath(thread)}/notes`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes: notesInput.value }),
+    });
+    if (blog !== defaultBlog) {
+      notesMessage.textContent = "Notes were saved in the previous collection. Refresh the thread list.";
+      return;
+    }
+    const item = items.find((entry) => entry.thread.blog === thread.blog && entry.thread.postId === thread.postId);
+    if (item) {
+      if (saved.notes) item.thread.notes = saved.notes;
+      else delete item.thread.notes;
+      updateNotesButton(item.notes, item.thread);
+    }
+    notesDialog.close();
+  } catch (error) {
+    notesMessage.textContent = error.message;
+  } finally {
+    notesSave.disabled = false;
+    notesCancel.disabled = false;
+    notesInput.disabled = false;
+  }
+});
+
+function showPartnerThreads(thread) {
+  const matches = items.map((item) => item.thread)
+    .filter((entry) => entry.partner && entry.partner.toLowerCase() === thread.partner.toLowerCase())
+    .sort((a, b) => (a.partnerNumber || 0) - (b.partnerNumber || 0));
+  partnerDialogSummary.textContent = `${matches.length} threads with ${thread.partner}.`;
+  partnerDialogList.replaceChildren();
+  for (const entry of matches) {
+    const row = document.createElement("li");
+    const link = document.createElement("a");
+    link.href = entry.resolvedBlog ? PostReference.postFromId(entry.resolvedBlog, entry.postId).url : entry.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = `${entry.partnerNumber ? `#${entry.partnerNumber} - ` : ""}${entry.title}`;
+    row.append(link);
+    if (entry.blog === thread.blog && entry.postId === thread.postId) {
+      row.append(document.createTextNode(" (this entry)"));
+    }
+    partnerDialogList.append(row);
+  }
+  partnerDialog.showModal();
+}
+
+document.querySelector("#partner-dialog-close").addEventListener("click", () => partnerDialog.close());
+partnerDialog.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    partnerDialog.close();
+  }
+});
+
+function openMergeDialog(thread) {
+  const candidates = items
+    .map((item) => item.thread)
+    .filter((candidate) =>
+      candidate.partner &&
+      thread.partner &&
+      candidate.partner.toLowerCase() === thread.partner.toLowerCase() &&
+      (candidate.blog !== thread.blog || candidate.postId !== thread.postId));
+  if (!candidates.length) {
+    message.textContent = "This thread has no other entry with the same writing partner.";
+    return;
+  }
+  mergeThread = thread;
+  mergeDescription.textContent = `Choose one entry from the same writing partner, "${thread.partner}", to merge with "${thread.title}".`;
+  mergeMessage.textContent = "";
+  mergeWith.replaceChildren();
+  mergePrimary.replaceChildren();
+  for (const candidate of candidates) {
+    mergeWith.add(new Option(`${candidate.title} (${candidate.blog}/${candidate.postId})`, `${candidate.blog}/${candidate.postId}`));
+  }
+  mergeWith.value = `${candidates[0].blog}/${candidates[0].postId}`;
+  updateMergePrimary();
+  mergeDialog.showModal();
+}
+
+function updateMergePrimary() {
+  const candidateKey = mergeWith.value;
+  const candidate = items.map((item) => item.thread).find((thread) =>
+    `${thread.blog}/${thread.postId}` === candidateKey);
+  mergePrimary.replaceChildren();
+  if (mergeThread) {
+    mergePrimary.add(new Option(`${mergeThread.title} (${mergeThread.blog}/${mergeThread.postId})`, `${mergeThread.blog}/${mergeThread.postId}`));
+  }
+  if (candidate) {
+    mergePrimary.add(new Option(`${candidate.title} (${candidate.blog}/${candidate.postId})`, `${candidate.blog}/${candidate.postId}`));
+  }
+  mergePrimary.value = `${mergeThread.blog}/${mergeThread.postId}`;
+}
+
+mergeWith.addEventListener("change", updateMergePrimary);
+mergeCancel.addEventListener("click", () => mergeDialog.close());
+mergeForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!mergeThread) return;
+  const candidateKey = mergeWith.value;
+  const candidate = items.map((item) => item.thread).find((thread) =>
+    `${thread.blog}/${thread.postId}` === candidateKey);
+  if (!candidate) return;
+  const [keepBlog, keepPostId] = mergePrimary.value.split("/");
+  const removeThread = `${mergeThread.blog}/${mergeThread.postId}` === `${keepBlog}/${keepPostId}`
+    ? candidate
+    : mergeThread;
+  const keepThread = `${mergeThread.blog}/${mergeThread.postId}` === `${keepBlog}/${keepPostId}`
+    ? mergeThread
+    : candidate;
+  if (!window.confirm(`Merge "${removeThread.title}" into "${keepThread.title}"? The other entry will be removed.`)) return;
+  mergeForm.querySelector('button[type="submit"]').disabled = true;
+  mergeCancel.disabled = true;
+  mergeMessage.textContent = "";
+  try {
+    await request(`${threadPath(removeThread)}/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keepBlog: keepThread.blog, keepPostId: keepThread.postId }),
+    });
+    mergeDialog.close();
+    await refresh();
+  } catch (error) {
+    mergeMessage.textContent = error.message;
+  } finally {
+    mergeForm.querySelector('button[type="submit"]').disabled = false;
+    mergeCancel.disabled = false;
+  }
+});
 
 function updatePartnerOptions() {
   const selected = partnerFilter.value;
@@ -508,10 +760,44 @@ function updatePartnerOptions() {
   }
   partnerFilter.value = partners.has(selected) ? selected : "";
   for (const item of items) {
-    const duplicate = Boolean(item.thread.partner && partners.get(item.thread.partner.toLowerCase()).count > 1);
-    item.row.classList.toggle("duplicate-partner", duplicate);
-    item.duplicateNotice.hidden = !duplicate;
+    const count = item.thread.partner ? partners.get(item.thread.partner.toLowerCase()).count : 0;
+    const sharedPartner = count > 1;
+    item.duplicateNotice.hidden = !sharedPartner;
+    item.partnerBadge.hidden = !sharedPartner;
+    item.merge.hidden = !sharedPartner;
+    if (sharedPartner) {
+      const number = item.thread.partnerNumber ? ` · #${item.thread.partnerNumber}` : "";
+      item.partnerBadge.textContent = `${count} threads${number}`;
+      item.partnerBadge.setAttribute("aria-label", `${count} threads with ${item.thread.partner}${number}. Show details.`);
+      item.duplicateNotice.textContent = `${count} threads share the writing partner ${item.thread.partner}. Partner numbers distinguish separate entries. `;
+    }
   }
+}
+
+function updateDuplicateHighlights() {
+  const counts = ThreadTable.possibleDuplicates(items);
+  for (const item of items) {
+    const count = counts.get(item);
+    item.row.classList.toggle("possible-duplicate", Boolean(count));
+    item.duplicateBadge.hidden = !count;
+    if (count) item.duplicateBadge.textContent = `Possible duplicate · ${count} entries`;
+  }
+}
+
+function updateRebloggerOptions() {
+  const selected = rebloggerSelect.value;
+  const names = ThreadTable.rebloggers(items);
+  if (selected && !names.some(([key]) => key === selected)) {
+    const option = Array.from(rebloggerSelect.options).find((entry) => entry.value === selected);
+    names.push([selected, option ? option.textContent : selected]);
+    names.sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: "base" }));
+  }
+  const current = Array.from(rebloggerSelect.options, (option) => [option.value, option.textContent]);
+  const desired = [["", "All rebloggers"], ...names];
+  if (JSON.stringify(current) !== JSON.stringify(desired)) {
+    rebloggerSelect.replaceChildren(...desired.map(([value, name]) => new Option(name, value)));
+  }
+  rebloggerSelect.value = names.some(([key]) => key === selected) ? selected : "";
 }
 
 function auName(id) {
@@ -698,16 +984,35 @@ trailDialog.addEventListener("close", () => {
   trailAuthenticated.disabled = false;
 });
 
+function resetFilters() {
+  titleFilter.value = "";
+  partnerFilter.value = "";
+  rebloggerFilter.value = "";
+  rebloggerSelect.value = "";
+  auFilter.value = "";
+  statusFilter.value = "all";
+  otherRebloggers.checked = false;
+  currentPage = 1;
+  updateTable();
+}
+
 function updateTable() {
   if (emptyRow) {
     emptyRow.remove();
     emptyRow = null;
   }
   const ordered = ThreadTable.order(items, sortKey, sortDirection, favouritesFirst.checked);
-  matchingItems = ordered.filter((item) => ThreadTable.matches(item, otherRebloggers.checked, defaultBlog, titleFilter.value, rebloggerFilter.value) &&
+  matchingItems = ordered.filter((item) => ThreadTable.matches(item, otherRebloggers.checked, defaultBlog, titleFilter.value, rebloggerFilter.value, rebloggerSelect.value) &&
     ThreadTable.matchesStatus(item, statusFilter.value) &&
     (!partnerFilter.value || item.thread.partner?.toLowerCase() === partnerFilter.value) &&
     (!auFilter.value || (auFilter.value === "unassigned" ? !item.thread.auId : `au:${item.thread.auId}` === auFilter.value)));
+  favouritesFirstHelp.hidden = !favouritesFirst.checked;
+  if (favouritesFirst.checked) {
+    const count = matchingItems.filter((item) => item.thread.favourite).length;
+    favouritesFirstHelp.textContent = count
+      ? `${count} starred ${count === 1 ? "thread" : "threads"} shown first; other matching threads follow.`
+      : "No starred threads match the current filters. Select a star beside a thread or adjust the filters.";
+  }
   randomThreadButton.disabled = loadingThreads || !matchingItems.length;
   const page = ThreadTable.page(matchingItems, Number(pageSize.value), currentPage);
   currentPage = page.current;
@@ -731,55 +1036,110 @@ function updateTable() {
     const empty = cell(emptyRow, text);
     empty.colSpan = 6;
   }
+  visibleItems = page.items;
+  checkVisible();
 }
 
-async function loadReblog(item) {
+async function checkVisible() {
+  if (loadingThreads || checkingVisible) return;
+  checkingVisible = true;
   try {
-    const { lastReblog, savedPost, cache } = await request(`${threadPath(item.thread)}/reblog`);
-    item.lastReblog = lastReblog;
-    item.savedPost = savedPost;
-    const latest = lastReblog || savedPost;
-    if (!latest) throw new Error("Tumblr returned no saved post details.");
-    const name = document.createElement(latest.url ? "a" : "span");
-    name.className = "reblogger-name";
-    name.textContent = latest.blog;
-    name.title = latest.blog;
-    if (latest.url) {
-      name.href = latest.url;
-      name.target = "_blank";
-      name.rel = "noopener noreferrer";
+    while (!loadingThreads) {
+      const item = visibleItems.find((entry) => entry.checkState === "needed" ||
+        (entry.checkState === "fresh" && (Date.now() < entry.cache.checkedAt || Date.now() >= entry.cache.freshUntil)));
+      if (!item) break;
+      await loadReblog(item);
     }
-    item.poster.replaceChildren(name);
-    if (!lastReblog) {
-      const label = document.createElement("span");
-      label.className = "saved-post-label";
-      label.textContent = "Saved post (no reblogs)";
-      item.poster.append(label);
-    }
-    if (cache) {
-      const label = document.createElement("span");
-      label.className = cache.stale ? "cache-info error" : "cache-info";
-      label.textContent = `Checked ${new Date(cache.checkedAt).toLocaleString()}${cache.stale ? ` — ${cache.warning}` : ""}`;
-      item.poster.append(label);
-    }
-    const date = new Date(latest.timestamp * 1000);
-    item.date.textContent = Number.isNaN(date.getTime()) ? "Unknown date" : date.toLocaleString();
-    item.date.title = item.date.textContent;
-  } catch (error) {
-    item.poster.textContent = error.message;
-    item.poster.classList.add("error");
   } finally {
-    item.status = "done";
-    updateTable();
+    checkingVisible = false;
   }
 }
 
-async function refresh() {
+function renderReblog(item, { lastReblog, savedPost, cache }) {
+  const latest = lastReblog || savedPost;
+  if (!latest) throw new Error("Tumblr returned no saved post details.");
+  item.lastReblog = lastReblog;
+  item.savedPost = savedPost;
+  item.cache = cache;
+  item.poster.classList.remove("error");
+  const name = document.createElement(latest.url ? "a" : "span");
+  name.className = "reblogger-name";
+  name.textContent = latest.blog;
+  name.title = latest.blog;
+  if (latest.url) {
+    name.href = latest.url;
+    name.target = "_blank";
+    name.rel = "noopener noreferrer";
+  }
+  item.poster.replaceChildren(name);
+  if (!lastReblog) {
+    const label = document.createElement("span");
+    label.className = "saved-post-label";
+    label.textContent = "Saved post (no reblogs)";
+    item.poster.append(label);
+  }
+  if (cache) {
+    const label = document.createElement("span");
+    label.className = cache.stale ? "cache-info error" : "cache-info";
+    label.textContent = `Checked ${new Date(cache.checkedAt).toLocaleString()}${cache.stale ? ` — ${cache.warning}` : ""}`;
+    item.poster.append(label);
+  }
+  const formatted = ThreadTable.formatPostDate(latest.timestamp);
+  if (formatted) {
+    const time = document.createElement("span");
+    time.className = "post-time";
+    time.textContent = formatted.time;
+    item.date.replaceChildren(document.createTextNode(formatted.date), time);
+    item.date.title = new Date(latest.timestamp * 1000).toLocaleString();
+  } else {
+    item.date.textContent = "Unknown date";
+    item.date.title = "Unknown date";
+  }
+}
+
+async function loadReblog(item, force = false) {
+  if (item.checkState === "checking") return;
+  item.checkState = "checking";
+  item.check.disabled = true;
+  item.status = "loading";
+  if (!item.lastReblog && !item.savedPost) item.poster.textContent = "Checking...";
+  let result;
+  let checkError;
+  try {
+    result = await request(`${threadPath(item.thread)}/reblog${force ? "?force=1" : ""}`);
+    if (items.includes(item)) renderReblog(item, result);
+  } catch (error) {
+    checkError = error.message;
+    if (items.includes(item)) {
+      if (item.lastReblog || item.savedPost) {
+        const label = document.createElement("span");
+        label.className = "cache-info error";
+        label.textContent = `Could not check: ${error.message}`;
+        item.poster.append(label);
+      } else {
+        item.poster.textContent = error.message;
+        item.poster.classList.add("error");
+      }
+    }
+  } finally {
+    item.status = "done";
+    item.checkState = result?.cache && !result.cache.stale ? "fresh" : "done";
+    item.check.disabled = false;
+    if (items.includes(item)) {
+      updateDuplicateHighlights();
+      updateRebloggerOptions();
+      updateTable();
+    }
+  }
+  return checkError || (result?.cache?.stale ? result.cache.warning : null);
+}
+
+async function refresh(savedThread = null, unverified = false) {
   loadingThreads = true;
   randomThreadButton.disabled = true;
   refreshButton.disabled = true;
   submitButton.disabled = true;
-  message.textContent = "";
+  message.textContent = savedThread ? "Thread saved. Loading the tracker and checking Tumblr..." : "";
   try {
     await loadDefaultBlog();
     askButton.disabled = false;
@@ -789,36 +1149,61 @@ async function refresh() {
       if (askDialog.open) askMessage.textContent = error.message;
     }
     await loadAus();
-    const threads = await request("/api/threads");
+    const [threads, cached] = await Promise.all([request("/api/threads"), request("/api/threads/reblogs/cache")]);
     table.replaceChildren();
     emptyRow = null;
     items = threads.map(renderThread);
-    updatePartnerOptions();
-    updateTable();
-    const pending = [...items];
-    async function worker() {
-      while (pending.length) await loadReblog(pending.shift());
+    const cacheByPost = new Map(cached.map((entry) => [`${entry.blog}/${entry.postId}`, entry]));
+    for (const item of items) {
+      const result = cacheByPost.get(`${item.thread.blog}/${item.thread.postId}`);
+      if (result) {
+        renderReblog(item, result);
+        item.checkState = result.cache.stale ? "needed" : "fresh";
+      }
     }
-    await Promise.all(Array.from({ length: Math.min(4, pending.length) }, worker));
+    const savedItem = savedThread && items.find((item) =>
+      item.thread.blog === savedThread.blog && item.thread.postId === savedThread.postId);
+    if (savedThread && !savedItem) throw new Error("Saved thread was not found in the reloaded collection.");
+    const checkError = savedItem && savedItem.checkState === "needed" ? await loadReblog(savedItem) : null;
+    updatePartnerOptions();
+    updateDuplicateHighlights();
+    updateRebloggerOptions();
+    updateTable();
+    if (savedItem) {
+      const index = matchingItems.indexOf(savedItem);
+      if (index >= 0) {
+        currentPage = Math.floor(index / Number(pageSize.value)) + 1;
+        updateTable();
+      }
+      const visibility = index < 0 ? " It is hidden by the current filters; clear them to find it." : "";
+      const warning = checkError ? ` Could not update its latest reblog: ${checkError}${/[.!?]$/.test(checkError) ? "" : "."}` : "";
+      message.textContent = `${unverified ? "Thread saved without verifying the post with Tumblr." : "Thread saved."}${warning}${visibility}`;
+    }
+    return true;
   } catch (error) {
-    message.textContent = error.message;
+    message.textContent = `${savedThread ? "Thread saved, but the list could not be reloaded: " : ""}${error.message}`;
+    return false;
   } finally {
     loadingThreads = false;
     randomThreadButton.disabled = !matchingItems.length;
     refreshButton.disabled = false;
     submitButton.disabled = !ausLoaded;
     table.querySelectorAll(".status-toggle").forEach((control) => { control.disabled = false; });
+    updateTable();
   }
 }
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   submitButton.disabled = true;
+  clearFormButton.disabled = true;
   cancelButton.disabled = true;
   refreshButton.disabled = true;
   const actionButtons = Array.from(table.querySelectorAll("button, .status-toggle"));
   actionButtons.forEach((button) => { button.disabled = true; });
   message.textContent = "";
+  if (!unverifiedLinkButton.hidden) showUnverifiedSavePrompt(false);
+  unverifiedLinkButton.hidden = true;
   try {
     const fields = new FormData(form);
     const partner = fields.get("partner").trim().replace(/^w\/\s*/i, "");
@@ -833,7 +1218,8 @@ form.addEventListener("submit", async (event) => {
     if (title.length > 200) throw new Error("The combined thread title must be 200 characters or fewer.");
     const auId = fields.get("auId") || null;
     const completion = editingThread ? { completed: editCompleted.checked } : {};
-    await request(editingThread ? threadPath(editingThread) : "/api/threads", {
+    const unverified = referenceType.value === "url";
+    const savedThread = await request(editingThread ? threadPath(editingThread) : "/api/threads", {
       method: editingThread ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(referenceType.value === "id"
@@ -841,9 +1227,14 @@ form.addEventListener("submit", async (event) => {
         : { title, auId, ...completion, url: fields.get("url") }),
     });
     resetForm();
-    await refresh();
+    await refresh(savedThread, unverified);
   } catch (error) {
     message.textContent = error.message;
+    if (error.canSaveUnverified && referenceType.value === "id") {
+      unverifiedLinkButton.hidden = false;
+      showUnverifiedSavePrompt(true, true);
+      message.textContent += " Not saved yet. To save the link anyway, select Step 1, then press the highlighted save button. Tumblr details may remain unavailable.";
+    }
     if (error.duplicate) {
       const thread = error.duplicate;
       const match = document.createElement("span");
@@ -853,7 +1244,7 @@ form.addEventListener("submit", async (event) => {
       label.textContent = "Matching thread";
       const link = document.createElement("a");
       link.className = "duplicate-match-title";
-      link.href = thread.url;
+      link.href = thread.resolvedBlog ? PostReference.postFromId(thread.resolvedBlog, thread.postId).url : thread.url;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.textContent = thread.title;
@@ -873,13 +1264,80 @@ form.addEventListener("submit", async (event) => {
     }
   } finally {
     submitButton.disabled = !ausLoaded;
+    clearFormButton.disabled = false;
     cancelButton.disabled = false;
     refreshButton.disabled = false;
     actionButtons.forEach((button) => { button.disabled = false; });
   }
 });
 
-refreshButton.addEventListener("click", refresh);
+refreshButton.addEventListener("click", () => refresh());
+cancelIdsButton.addEventListener("click", () => { cancelIds = true; });
+updateIdsButton.addEventListener("click", async () => {
+  if (!items.length) {
+    updateIdsStatus.textContent = "There are no tracked threads to update.";
+    return;
+  }
+  if (!window.confirm(`Verify blog identities for ${items.length} tracked threads? This makes paced Tumblr requests and may take several minutes.`)) return;
+  const blog = defaultBlog;
+  const pending = [...items];
+  let processed = 0;
+  let failures = 0;
+  let stopped = "";
+  cancelIds = false;
+  updateIdsButton.disabled = true;
+  cancelIdsButton.hidden = false;
+  updateIdsErrors.replaceChildren();
+  try {
+    for (const item of pending) {
+      if (cancelIds) { stopped = "Stopped by user."; break; }
+      if (blog !== defaultBlog) { stopped = "Configured blog changed; refresh before retrying."; break; }
+      if (!items.includes(item)) { stopped = "Thread list changed; refresh before retrying."; break; }
+      updateIdsStatus.textContent = `Updating ${processed + 1} of ${pending.length}: ${item.thread.title}`;
+      try {
+        const updated = await request(`${threadPath(item.thread)}/identity`, { method: "POST" });
+        if (blog !== defaultBlog) { stopped = "Configured blog changed; refresh before retrying."; break; }
+        if (!items.includes(item)) { stopped = "Thread list changed; refresh before retrying."; break; }
+        Object.assign(item.thread, updated);
+        const titleLink = item.row.querySelector(".thread-title-link");
+        titleLink.href = PostReference.postFromId(updated.resolvedBlog, updated.postId).url;
+        if (cancelIds) { stopped = "Stopped by user."; break; }
+        if ((!item.lastReblog && !item.savedPost) || (item.lastReblog && !item.lastReblog.blogUuid)) {
+          const result = await request(`${threadPath(item.thread)}/reblog?force=1`);
+          if (result.cache?.rateLimited) {
+            const error = new Error(result.cache.warning);
+            error.status = 429;
+            throw error;
+          }
+          if (result.cache?.stale) throw new Error(result.cache.warning);
+          if (items.includes(item)) {
+            renderReblog(item, result);
+            item.checkState = "fresh";
+            updateDuplicateHighlights();
+            updateRebloggerOptions();
+            updateTable();
+          }
+          if (result.lastReblog && !result.lastReblog.blogUuid) {
+            throw new Error("Tumblr did not provide the reblogger UUID.");
+          }
+        }
+      } catch (error) {
+        failures++;
+        const entry = document.createElement("li");
+        entry.textContent = `${item.thread.title} (${item.thread.blog}/${item.thread.postId}): ${error.message}`;
+        updateIdsErrors.append(entry);
+        if (error.status === 429) stopped = "Tumblr rate limit reached; retry after the cooldown.";
+        else if (error.status === 409) stopped = "Collection changed; refresh before retrying.";
+      }
+      processed++;
+      if (stopped) break;
+    }
+  } finally {
+    updateIdsButton.disabled = false;
+    cancelIdsButton.hidden = true;
+    updateIdsStatus.textContent = `Checked ${processed} of ${pending.length} threads; ${failures} need review.${stopped ? ` ${stopped}` : ""}`;
+  }
+});
 randomThreadButton.addEventListener("click", () => {
   const item = ThreadTable.random(matchingItems);
   if (item) {
@@ -888,15 +1346,43 @@ randomThreadButton.addEventListener("click", () => {
   }
 });
 cancelButton.addEventListener("click", resetForm);
-referenceType.addEventListener("change", updateReferenceFields);
+unverifiedLinkButton.addEventListener("click", () => {
+  try {
+    urlInput.value = PostReference.postFromId(blogInput.value, idInput.value).url;
+    referenceType.value = "url";
+    updateReferenceFields();
+    unverifiedLinkButton.hidden = true;
+    message.textContent = "Post link ready. It will be saved without Tumblr verification.";
+    showUnverifiedSavePrompt(true);
+    submitButton.focus();
+  } catch (error) {
+    if (!(error instanceof PostReference.ValidationError)) throw error;
+    unverifiedLinkButton.hidden = true;
+    showUnverifiedSavePrompt(false);
+    message.textContent = error.message;
+  }
+});
+clearFormButton.addEventListener("click", () => {
+  resetForm();
+  message.textContent = "";
+});
+referenceType.addEventListener("change", () => {
+  unverifiedLinkButton.hidden = true;
+  showUnverifiedSavePrompt(false);
+  updateReferenceFields();
+});
 form.addEventListener("post-reference-default", (event) => {
   defaultPostReference = event.detail;
   if (!editingThread) {
     referenceType.value = defaultPostReference;
+    unverifiedLinkButton.hidden = true;
+    showUnverifiedSavePrompt(false);
     updateReferenceFields();
   }
 });
 extractUrlInput.addEventListener("input", () => {
+  if (!unverifiedLinkButton.hidden) showUnverifiedSavePrompt(false);
+  unverifiedLinkButton.hidden = true;
   const value = extractUrlInput.value.trim();
   extractUrlInput.setCustomValidity("");
   if (!value) {
@@ -916,8 +1402,14 @@ extractUrlInput.addEventListener("input", () => {
     extractUrlHelp.textContent = error.message;
   }
 });
-blogInput.addEventListener("input", clearExtractUrl);
+blogInput.addEventListener("input", () => {
+  if (!unverifiedLinkButton.hidden) showUnverifiedSavePrompt(false);
+  unverifiedLinkButton.hidden = true;
+  clearExtractUrl();
+});
 idInput.addEventListener("input", () => {
+  if (!unverifiedLinkButton.hidden) showUnverifiedSavePrompt(false);
+  unverifiedLinkButton.hidden = true;
   clearExtractUrl();
   if (/^[0-9]*$/.test(idInput.value)) {
     lastValidPostId = idInput.value;
@@ -929,12 +1421,13 @@ idInput.addEventListener("input", () => {
     document.querySelector("#post-id-help").textContent = "Only digits are allowed; that input was not added.";
   }
 });
-for (const filter of [otherRebloggers, auFilter, partnerFilter, statusFilter, favouritesFirst, pageSize]) {
+for (const filter of [otherRebloggers, auFilter, partnerFilter, rebloggerSelect, statusFilter, favouritesFirst, pageSize]) {
   filter.addEventListener("change", () => { currentPage = 1; updateTable(); });
 }
 for (const filter of [titleFilter, rebloggerFilter]) {
   filter.addEventListener("input", () => { currentPage = 1; updateTable(); });
 }
+document.querySelector("#reset-filters").addEventListener("click", resetFilters);
 firstPage.addEventListener("click", () => { currentPage = 1; updateTable(); });
 previousPage.addEventListener("click", () => { currentPage--; updateTable(); });
 nextPage.addEventListener("click", () => { currentPage++; updateTable(); });

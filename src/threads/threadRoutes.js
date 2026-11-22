@@ -2,12 +2,12 @@
 
 const express = require("express");
 const axios = require("axios");
-const { createBlogThreadStore, normalizeCollectionBlog, getLastReblog, getTrail, parsePostUrl, postFromId, validateTitle, verifyPost, ValidationError, DuplicateThreadError } = require("./threadTracker");
+const { createBlogThreadStore, normalizeCollectionBlog, getLastReblog, getTrail, parsePostUrl, postFromId, validateTitle, verifyPostDetails, ValidationError, DuplicateThreadError } = require("./threadTracker");
 const { getThreadBlog } = require("../config/blogConfig");
 const { createAuStore } = require("./auStore");
 const { createAskStore } = require("./askStore");
 
-function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadStore({ getBlog }), auStore = createAuStore, askStore = createAskStore, api = axios, getApiKey = () => process.env.CONSUMER_KEY, getAccessToken = () => null, getReblog = getLastReblog } = {}) {
+function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadStore({ getBlog }), auStore = createAuStore, askStore = createAskStore, api = axios, getApiKey = () => process.env.CONSUMER_KEY, getAccessToken = () => null, getReblog = getLastReblog, getCachedReblogs = null, verifyCachedPost = verifyPostDetails } = {}) {
   const router = express.Router();
 
   router.use(express.json({ limit: "16kb" }));
@@ -43,6 +43,17 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
     } catch (error) {
       console.error("Could not read tracked threads:", error.message);
       res.status(500).json({ error: "Could not read tracked threads. Check the server log." });
+    }
+  });
+
+  router.get("/reblogs/cache", (req, res) => {
+    res.set("Cache-Control", "no-store");
+    try {
+      if (!getCachedReblogs) throw new Error("Reblog cache is unavailable.");
+      res.json(getCachedReblogs(req.threadStore.list()));
+    } catch (error) {
+      console.error("Could not read cached reblogs:", error.message);
+      res.status(500).json({ error: "Could not read cached reblogs. Check the server log." });
     }
   });
 
@@ -130,23 +141,24 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
         (!existing || item.blog !== existing.blog || item.postId !== existing.postId)
       );
       if (duplicate) throw new DuplicateThreadError(duplicate);
+      let verifiedUuid;
       if (postId !== undefined) {
         if (!existing || existing.blog !== reference.blog || existing.postId !== reference.postId) {
           const apiKey = getApiKey();
-          if (!apiKey) return res.status(503).json({ error: "Set CONSUMER_KEY in .env to verify Tumblr posts." });
+          if (!apiKey) return res.status(503).json({ error: "Set CONSUMER_KEY in .env to verify Tumblr posts.", canSaveUnverified: true });
           try {
-            await verifyPost(reference, apiKey, api);
+            verifiedUuid = (await verifyPostDetails(reference, apiKey, api)).blogUuid;
           } catch (error) {
-            if (error instanceof ValidationError) throw error;
+            if (error instanceof ValidationError) return res.status(400).json({ error: error.message, canSaveUnverified: true });
             if (error.response && error.response.status === 404) {
-              return res.status(404).json({ error: "Post not found or inaccessible on this blog. Check the blog name and post ID." });
+              return res.status(404).json({ error: "Tumblr could not find or access this post. Check the publishing blog and post ID; restricted posts may not be available through the public API.", canSaveUnverified: true });
             }
             if (error.response) {
-              return res.status(502).json({ error: `Tumblr returned HTTP ${error.response.status} while verifying the post.` });
+              return res.status(502).json({ error: `Tumblr returned HTTP ${error.response.status} while verifying the post.`, canSaveUnverified: true });
             }
             console.error("Could not verify Tumblr post:", error.message);
-            if (error.code === "ECONNABORTED") return res.status(502).json({ error: "Tumblr post verification timed out." });
-            return res.status(502).json({ error: "Could not verify the post with Tumblr. Check the server log." });
+            if (error.code === "ECONNABORTED") return res.status(502).json({ error: "Tumblr post verification timed out.", canSaveUnverified: true });
+            return res.status(502).json({ error: "Could not verify the post with Tumblr. Check the server log.", canSaveUnverified: true });
           }
         }
       }
@@ -158,8 +170,8 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
         throw new ValidationError("Choose an existing AU or leave it unassigned.");
       }
       const result = isEdit
-        ? req.threadStore.update(req.params.blog, req.params.postId, title, reference.url, auId, completed)
-        : req.threadStore.add(title, reference.url, auId);
+        ? req.threadStore.update(req.params.blog, req.params.postId, title, reference.url, auId, completed, verifiedUuid)
+        : req.threadStore.add(title, reference.url, auId, verifiedUuid);
       if (!result) return res.status(404).json({ error: "Tracked thread not found." });
       res.status(isEdit ? 200 : 201).json(result);
     } catch (error) {
@@ -173,6 +185,28 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
   router.post("/", (req, res) => saveThread(req, res, false));
   router.put("/:blog/:postId", (req, res) => saveThread(req, res, true));
 
+  router.post("/:blog/:postId/identity", async (req, res) => {
+    try {
+      if (!req.get("X-Thread-Blog")) return res.status(400).json({ error: "Refresh the thread list first." });
+      const thread = req.threadStore.list().find((item) =>
+        item.blog === req.params.blog && item.postId === req.params.postId);
+      if (!thread) return res.status(404).json({ error: "Tracked thread not found." });
+      const { post, blogUuid } = await verifyCachedPost(thread, getApiKey(), api);
+      if (!blogUuid) return res.status(422).json({ error: "Tumblr did not provide a blog UUID; review this post manually." });
+      if (normalizeCollectionBlog(getBlog()) !== req.threadBlog) {
+        return res.status(409).json({ error: "The configured blog changed. Refresh the thread list before continuing." });
+      }
+      const updated = req.threadStore.setBlogIdentity(thread.blog, thread.postId, blogUuid, post.blog_name.toLowerCase());
+      if (!updated) return res.status(409).json({ error: "The tracked post changed during verification." });
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof ValidationError) return res.status(422).json({ error: error.message });
+      if (error.response?.status === 429) return res.status(429).json({ error: "Tumblr rate limit reached. Try again after the cooldown." });
+      console.error("Could not verify thread blog identity:", error.code || error.response?.status || error.message);
+      res.status(502).json({ error: error.response ? `Tumblr returned HTTP ${error.response.status}. Review this post manually.` : "Could not verify the post. Check the server log." });
+    }
+  });
+
   router.patch("/:blog/:postId/status", (req, res) => {
     try {
       const thread = req.threadStore.setFlags(req.params.blog, req.params.postId, req.body);
@@ -182,6 +216,40 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
       if (error instanceof ValidationError) return res.status(400).json({ error: error.message });
       console.error("Could not update thread status:", error.message);
       res.status(500).json({ error: "Could not update thread status. Check the server log." });
+    }
+  });
+
+  router.patch("/:blog/:postId/notes", (req, res) => {
+    try {
+      if (!req.get("X-Thread-Blog")) return res.status(400).json({ error: "Refresh the thread list first." });
+      const thread = req.threadStore.setNotes(req.params.blog, req.params.postId, req.body?.notes);
+      if (!thread) return res.status(404).json({ error: "Tracked thread not found." });
+      res.json(thread);
+    } catch (error) {
+      if (error instanceof ValidationError) return res.status(400).json({ error: error.message });
+      console.error("Could not save thread notes:", error.message);
+      res.status(500).json({ error: "Could not save thread notes. Check the server log." });
+    }
+  });
+
+  router.post("/:blog/:postId/merge", (req, res) => {
+    try {
+      const { keepBlog, keepPostId } = req.body || {};
+      if (typeof keepBlog !== "string" || typeof keepPostId !== "string") {
+        throw new ValidationError("Choose the post to keep.");
+      }
+      const merged = req.threadStore.merge(
+        normalizeCollectionBlog(keepBlog),
+        keepPostId,
+        req.params.blog,
+        req.params.postId,
+      );
+      if (!merged) return res.status(404).json({ error: "Tracked thread not found." });
+      res.json(merged);
+    } catch (error) {
+      if (error instanceof ValidationError) return res.status(400).json({ error: error.message });
+      console.error("Could not merge tracked threads:", error.message);
+      res.status(500).json({ error: "Could not merge tracked threads. Check the server log." });
     }
   });
 
@@ -203,10 +271,17 @@ function createThreadRoutes({ getBlog = getThreadBlog, store = createBlogThreadS
         item.blog === req.params.blog && item.postId === req.params.postId
       );
       if (!thread) return res.status(404).json({ error: "Tracked thread not found." });
-      res.json(await getReblog(thread, getApiKey(), api));
+      if (req.query.force !== undefined && req.query.force !== "1") {
+        return res.status(400).json({ error: "Invalid reblog refresh option." });
+      }
+      res.json(await getReblog(thread, getApiKey(), api, { force: req.query.force === "1" }));
     } catch (error) {
       console.error("Could not fetch thread reblogs:", error.message);
       if (error.response) {
+        if (error.response.status === 429) return res.status(429).json({ error: "Tumblr rate limit reached. Try again after the cooldown." });
+        if (error.response.status === 403 || error.response.status === 404) {
+          return res.status(502).json({ error: `Tumblr could not access reblog details for this post (HTTP ${error.response.status}). The post may be restricted or unavailable.` });
+        }
         return res.status(502).json({ error: `Tumblr returned HTTP ${error.response.status}.` });
       }
       if (error.code === "ECONNABORTED") return res.status(502).json({ error: "Tumblr request timed out." });

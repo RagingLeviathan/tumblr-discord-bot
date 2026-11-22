@@ -26,6 +26,8 @@ test("follower command uses the explicit blog, configured default, or fallback",
   express.static = () => () => {};
   const env = { BLOG_NAME: " configured-blog " };
   const getReblog = () => {};
+  const getCachedReblogs = () => {};
+  const verifyCachedPost = () => {};
   const dependencies = {
     dotenv: { config() {} },
     "./followers/tumblrcracker": { main: async (blog) => { calls.push(blog); return { success: true, data: "[]", filePath: "saved-snapshot.json" }; } },
@@ -34,8 +36,13 @@ test("follower command uses the explicit blog, configured default, or fallback",
     crypto: {},
     axios: {},
     path,
-    "./threads/threadRoutes": { createThreadRoutes: (options) => { assert.equal(options.getReblog, getReblog); return () => {}; } },
-    "./threads/reblogCache": { createReblogCache: () => ({ get: getReblog }) },
+    "./threads/threadRoutes": { createThreadRoutes: (options) => {
+      assert.equal(options.getReblog, getReblog);
+      assert.equal(options.getCachedReblogs, getCachedReblogs);
+      assert.equal(options.verifyCachedPost, verifyCachedPost);
+      return () => {};
+    } },
+    "./threads/reblogCache": { createReblogCache: () => ({ get: getReblog, snapshot: getCachedReblogs, verify: verifyCachedPost }) },
     "./config/blogConfig": { getDefaultBlog: () => (env.BLOG_NAME || "").trim() || "iobartach" },
     "./config/migrateData": { migrateData() {} },
     "./config/tumblrAuth": { createTumblrAuth: (options) => {

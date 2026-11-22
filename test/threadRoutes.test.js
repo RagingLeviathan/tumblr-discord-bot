@@ -103,6 +103,37 @@ test("updates thread flags and rejects invalid or stale changes", async (t) => {
   assert.equal(saved.favourite, true);
 });
 
+test("saves and clears per-blog thread notes and rejects invalid or stale requests", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-notes-route-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let blog = "first";
+  const store = createBlogThreadStore({ directory: dir, getBlog: () => blog });
+  store.add("Story", "https://www.tumblr.com/root/123");
+  const app = express();
+  app.use("/api/threads", createThreadRoutes({ getBlog: () => blog, store }));
+  const server = await new Promise((resolve) => {
+    const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const url = `http://127.0.0.1:${server.address().port}/api/threads/root/123/notes`;
+  const patch = (body, header = "first") => fetch(url, {
+    method: "PATCH", headers: { "Content-Type": "application/json", ...(header ? { "X-Thread-Blog": header } : {}) },
+    body: JSON.stringify(body),
+  });
+  assert.equal((await patch({ notes: "text" }, "")).status, 400);
+  assert.equal((await patch({ notes: "x".repeat(1001) })).status, 400);
+  assert.equal((await patch({ notes: null })).status, 400);
+  const saved = await patch({ notes: "x".repeat(1000) });
+  assert.equal(saved.status, 200);
+  assert.equal((await saved.json()).notes.length, 1000);
+  blog = "second";
+  assert.equal((await patch({ notes: "stale" })).status, 409);
+  blog = "first";
+  assert.equal(store.list()[0].notes.length, 1000);
+  assert.equal((await patch({ notes: "" })).status, 200);
+  assert.equal(store.list()[0].notes, undefined);
+});
+
 test("manages per-blog AUs and preserves assignments when threads are edited", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-au-test-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -327,17 +358,23 @@ test("thread endpoints persist entries and report per-thread Tumblr errors", asy
     const base = `http://127.0.0.1:${server.address().port}/api/threads`;
     const add = (data) => fetch(base, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
     assert.deepEqual(await (await fetch(`${base}/config`)).json(), { defaultBlog: "default-blog" });
-    assert.equal((await add({ title: "Bad", postId: "bad" })).status, 400);
+    const invalid = await add({ title: "Bad", postId: "bad" });
+    assert.equal(invalid.status, 400);
+    assert.equal((await invalid.json()).canSaveUnverified, undefined);
     assert.equal((await add({ title: "Bad", blog: "bad.example", postId: "123" })).status, 400);
     assert.equal((await add({ title: "Bad", postId: 789524026478493696 })).status, 400);
     assert.equal((await add({ title: "Bad", url: "https://www.tumblr.com/blog/1", postId: "1" })).status, 400);
     assert.equal(requests.length, 0);
     key = "";
-    assert.equal((await add({ title: "Missing key", postId: "123" })).status, 503);
+    const missingKey = await add({ title: "Missing key", postId: "123" });
+    assert.equal(missingKey.status, 503);
+    assert.equal((await missingKey.json()).canSaveUnverified, true);
     key = "key";
     for (const [mode, status] of [["404", 404], ["429", 502], ["timeout", 502], ["empty", 400], ["malformed", 502]]) {
       behavior = mode;
-      assert.equal((await add({ title: mode, postId: "123" })).status, status, mode);
+      const failed = await add({ title: mode, postId: "123" });
+      assert.equal(failed.status, status, mode);
+      assert.equal((await failed.json()).canSaveUnverified, true, mode);
       assert.deepEqual(JSON.parse(fs.readFileSync(file)), []);
     }
     behavior = "success";
@@ -357,6 +394,16 @@ test("thread endpoints persist entries and report per-thread Tumblr errors", asy
     const saved = JSON.parse(fs.readFileSync(file));
     assert.equal(saved.length, 2);
     assert.equal(saved[1].url, "https://www.tumblr.com/other/789524026478493697");
+    behavior = "404";
+    const failure = await add({ title: "Unavailable", blog: "private-blog", postId: "123" });
+    assert.equal(failure.status, 404);
+    assert.equal(JSON.parse(fs.readFileSync(file)).length, 2);
+    const callsBeforeUrl = requests.length;
+    const unverified = await add({ title: "Unavailable", url: "https://www.tumblr.com/private-blog/123" });
+    assert.equal(unverified.status, 201);
+    assert.equal((await unverified.json()).blogUuid, undefined);
+    assert.equal(requests.length, callsBeforeUrl);
+    assert.equal(JSON.parse(fs.readFileSync(file))[2].url, "https://www.tumblr.com/private-blog/123");
   });
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}/api/threads`;
@@ -403,8 +450,12 @@ test("thread endpoints persist entries and report per-thread Tumblr errors", asy
   });
   api.get = async () => { const error = new Error("rate limited"); error.response = { status: 429 }; throw error; };
   const failure = await fetch(`${movedUrl}/reblog`);
-  assert.equal(failure.status, 502);
-  assert.match((await failure.json()).error, /429/);
+  assert.equal(failure.status, 429);
+  assert.match((await failure.json()).error, /rate limit/i);
+  api.get = async () => { const error = new Error("not found"); error.response = { status: 404 }; throw error; };
+  const inaccessible = await fetch(`${movedUrl}/reblog`);
+  assert.equal(inaccessible.status, 502);
+  assert.match((await inaccessible.json()).error, /reblog details.*restricted or unavailable/i);
   assert.equal((await fetch(movedUrl, { method: "DELETE" })).status, 204);
   assert.equal((await fetch(`${movedUrl}/reblog`)).status, 404);
   assert.equal((await fetch(movedUrl, { method: "DELETE" })).status, 404);

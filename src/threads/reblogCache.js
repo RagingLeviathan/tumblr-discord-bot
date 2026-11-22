@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const paths = require("../config/dataPaths");
-const { getLastReblog, parsePostUrl, postFromId } = require("./threadTracker");
+const { getLastReblog, verifyPostDetails, parsePostUrl, postFromId } = require("./threadTracker");
 
 const FRESH_MS = 60 * 60 * 1000;
 const RETRY_MS = 15 * 60 * 1000;
@@ -21,6 +21,7 @@ class CacheStorageError extends Error {
 function validResult(result) {
   function validPost(post, allowMissingUrl) {
     if (!post || typeof post.blog !== "string" || !/^[a-z0-9][a-z0-9-]*$/i.test(post.blog) ||
+        (post.blogUuid !== undefined && (typeof post.blogUuid !== "string" || !/^t:[A-Za-z0-9_-]+$/.test(post.blogUuid))) ||
         typeof post.timestamp !== "number" || !Number.isFinite(new Date(post.timestamp * 1000).getTime())) return false;
     if (post.url === null && allowMissingUrl) return true;
     if (typeof post.url !== "string") return false;
@@ -121,13 +122,28 @@ function createReblogCache({ file = path.join(paths.data, "reblog-cache.json"), 
     return work;
   }
 
-  async function get(thread, apiKey, api) {
+  function snapshot(threads) {
+    const data = load();
+    const keys = new Set(threads.map((thread) => {
+      const post = postFromId(thread.blog, thread.postId);
+      return `${post.blog}/${post.postId}`;
+    }));
+    return data.entries.filter((entry) => keys.has(`${entry.blog}/${entry.postId}`)).map((entry) => {
+      const stale = now() < entry.checkedAt || now() - entry.checkedAt >= FRESH_MS;
+      return {
+        blog: entry.blog, postId: entry.postId, ...entry.result,
+        cache: { checkedAt: entry.checkedAt, freshUntil: entry.checkedAt + FRESH_MS, stale, ...(stale ? { warning: "Cached result needs checking." } : {}) },
+      };
+    });
+  }
+
+  async function get(thread, apiKey, api, { force = false } = {}) {
     const post = postFromId(thread.blog, thread.postId);
     const key = `${post.blog}/${post.postId}`;
     const data = load();
     const cached = data.entries.find((entry) => entry.blog === post.blog && entry.postId === post.postId);
-    if (cached && now() >= cached.checkedAt && now() - cached.checkedAt < FRESH_MS) {
-      return { ...cached.result, cache: { checkedAt: cached.checkedAt, stale: false } };
+    if (!force && cached && now() >= cached.checkedAt && now() - cached.checkedAt < FRESH_MS) {
+      return { ...cached.result, cache: { checkedAt: cached.checkedAt, freshUntil: cached.checkedAt + FRESH_MS, stale: false } };
     }
     const failure = failures.get(key);
     if (failure && now() < failure.until) {
@@ -148,7 +164,7 @@ function createReblogCache({ file = path.join(paths.data, "reblog-cache.json"), 
         if (error.response?.status !== 429) failures.set(key, { until: now() + ERROR_RETRY_MS, error, warning });
         if (!cached) throw error;
         console.error("Could not refresh cached reblog:", error.code || error.response?.status || error.name);
-        return { ...cached.result, cache: { checkedAt: cached.checkedAt, stale: true, warning } };
+        return { ...cached.result, cache: { checkedAt: cached.checkedAt, stale: true, warning, rateLimited: error.response?.status === 429 } };
       }
       if (!validResult(result)) throw new Error("Tumblr returned invalid reblog details.");
       const entry = { blog: post.blog, postId: post.postId, checkedAt: now(), result };
@@ -161,14 +177,18 @@ function createReblogCache({ file = path.join(paths.data, "reblog-cache.json"), 
         else data.entries.pop();
         throw error;
       }
-      return { ...result, cache: { checkedAt: entry.checkedAt, stale: false } };
+      return { ...result, cache: { checkedAt: entry.checkedAt, freshUntil: entry.checkedAt + FRESH_MS, stale: false } };
     })();
     pending.set(key, work);
     try { return await work; }
     finally { pending.delete(key); }
   }
 
-  return { get };
+  function verify(thread, apiKey, api) {
+    return verifyPostDetails(thread, apiKey, { get: (...args) => request(api, ...args) });
+  }
+
+  return { get, snapshot, verify };
 }
 
 module.exports = { createReblogCache };
